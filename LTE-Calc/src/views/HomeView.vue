@@ -32,10 +32,10 @@ function goHata() {
         </div>
 
         <div class="card" @click="goHata">
-          <div class="badge">COST-231</div>
-          <h2>COST-231 Hata Uplink Simulator</h2>
+          <div class="badge">Cost Hata</div>
+          <h2>Cost Hata Uplink Simulator</h2>
           <p>
-            Uplink received power estimation using COST-231 Hata model for
+            Uplink received power estimation using Cost Hata model for
             urban and suburban environments.
           </p>
           <span class="cta">Open simulator →</span>
