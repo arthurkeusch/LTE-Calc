@@ -1,0 +1,16 @@
+name: LTE-Calc
+
+services:
+  frontend:
+    build:
+      context: ./LTE-Calc
+      dockerfile: Dockerfile
+    container_name: LTE-Calc_frontend
+    expose:
+      - "8080"
+    restart: unless-stopped
+    networks: [ WebSite ]
+
+networks:
+  WebSite:
+    external: true
