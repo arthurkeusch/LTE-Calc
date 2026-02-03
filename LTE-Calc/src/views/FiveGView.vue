@@ -10,6 +10,7 @@
     <FiveGMap
         v-model:selected="selected"
         :zoneSideKm="zoneSideKm"
+        :roads="roadsData"
     />
   </div>
 </template>
@@ -24,6 +25,7 @@ const zoneSideKm = ref(1.0)
 const selected = ref(null)
 
 const speedStats = ref(null)
+const roadsData = ref([])
 const speedLoading = ref(false)
 const speedError = ref(null)
 
@@ -33,6 +35,7 @@ let debounceTimer = null
 function scheduleSpeedRefresh() {
   if (!selected.value) {
     speedStats.value = null
+    roadsData.value = []
     speedError.value = null
     speedLoading.value = false
     return
@@ -47,17 +50,19 @@ function scheduleSpeedRefresh() {
     speedError.value = null
 
     try {
-      const speeds = await fetchRoadSpeedsInSquare(
+      const {speeds, roads} = await fetchRoadSpeedsInSquare(
           selected.value.lat,
           selected.value.lng,
           zoneSideKm.value,
           aborter.signal
       )
       speedStats.value = computeSpeedStats(speeds)
+      roadsData.value = roads
     } catch (e) {
       if (e?.name !== "AbortError") {
         speedError.value = e?.message || "Failed to fetch road speeds"
         speedStats.value = null
+        roadsData.value = []
       }
     } finally {
       speedLoading.value = false

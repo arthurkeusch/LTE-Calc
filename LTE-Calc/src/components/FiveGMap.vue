@@ -17,6 +17,10 @@ const props = defineProps({
   zoneSideKm: {
     type: Number,
     required: true
+  },
+  roads: {
+    type: Array,
+    default: () => []
   }
 })
 
@@ -28,6 +32,7 @@ const zoneHalfSideM = computed(() => (Number(props.zoneSideKm) * 1000) / 2)
 let map = null
 let centerDot = null
 let square = null
+let roadLayers = L.layerGroup()
 
 function boundsFromCenter(lat, lng, halfSideM) {
   const latRad = (lat * Math.PI) / 180
@@ -36,6 +41,16 @@ function boundsFromCenter(lat, lng, halfSideM) {
   const sw = L.latLng(lat - dLat, lng - dLng)
   const ne = L.latLng(lat + dLat, lng + dLng)
   return L.latLngBounds(sw, ne)
+}
+
+function getSpeedColor(speed) {
+  // 30 km/h -> Bleu (240)
+  // 130 km/h -> Rouge (0)
+  const minS = 30
+  const maxS = 110
+  const t = Math.max(0, Math.min(1, (speed - minS) / (maxS - minS)))
+  const hue = (1 - t) * 240
+  return `hsl(${hue}, 100%, 50%)`
 }
 
 function updateLayers(fit = true) {
@@ -48,7 +63,9 @@ function updateLayers(fit = true) {
       radius: 7,
       weight: 2,
       opacity: 1,
-      fillOpacity: 0.25
+      color: "#fff",
+      fillColor: "#5865F2",
+      fillOpacity: 0.8
     }).addTo(map)
   } else {
     centerDot.setLatLng([lat, lng])
@@ -56,13 +73,25 @@ function updateLayers(fit = true) {
 
   if (!square) {
     square = L.rectangle(b, {
-      weight: 2,
-      opacity: 1,
-      fill: false
+      weight: 5,
+      color: "#5865F2",
+      opacity: 0.8,
+      fill: false,
+      dashArray: "5, 10"
     }).addTo(map)
   } else {
     square.setBounds(b)
   }
+
+  roadLayers.clearLayers()
+  props.roads.forEach(road => {
+    L.polyline(road.geometry, {
+      color: getSpeedColor(road.speed),
+      weight: 5,
+      opacity: 0.7,
+      lineJoin: 'round'
+    }).addTo(roadLayers)
+  })
 
   if (fit) map.fitBounds(b, {padding: [18, 18], animate: true})
 }
@@ -81,6 +110,8 @@ onMounted(() => {
     maxZoom: 20,
     attribution: "&copy; OpenStreetMap contributors"
   }).addTo(map)
+
+  roadLayers.addTo(map)
 
   map.on("click", onMapClick)
 
@@ -106,7 +137,11 @@ watch(() => props.selected, (newVal) => {
   if (newVal) {
     updateLayers(true)
   }
-}, { deep: true })
+}, {deep: true})
+
+watch(() => props.roads, () => {
+  updateLayers(false)
+}, {deep: true})
 </script>
 
 <style scoped>

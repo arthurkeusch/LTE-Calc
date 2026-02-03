@@ -12,12 +12,12 @@ export async function fetchRoadSpeedsInSquare(lat, lng, sideKm, signal) {
 (
   way["highway"](${south},${west},${north},${east});
 );
-out tags;`
+out body geom;`
 
     const url = "https://overpass-api.de/api/interpreter"
     const res = await fetch(url, {
         method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8" },
+        headers: {"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8"},
         body: "data=" + encodeURIComponent(query),
         signal
     })
@@ -30,32 +30,43 @@ out tags;`
     const json = await res.json()
     const els = Array.isArray(json?.elements) ? json.elements : []
 
+    const roads = []
     const speeds = []
     for (const el of els) {
+        if (el.type !== "way") continue
         const tags = el?.tags || {}
         const highway = tags.highway
         if (!highway) continue
         const s = speedFromTags(tags, highway)
-        if (Number.isFinite(s) && s > 0) speeds.push(s)
+        if (Number.isFinite(s) && s > 0) {
+            speeds.push(s)
+            if (el.geometry) {
+                roads.push({
+                    id: el.id,
+                    speed: s,
+                    geometry: el.geometry.map(p => [p.lat, p.lon])
+                })
+            }
+        }
     }
 
-    return speeds
+    return {speeds, roads}
 }
 
 function speedFromTags(tags, highway) {
     const ms = tags.maxspeed
     const parsed = parseMaxspeed(ms)
-    if (Number.isFinite(parsed)) return clamp(parsed, 5, 160)
+    if (Number.isFinite(parsed)) return clamp(parsed, 10, 130)
 
     const defaults = {
-        motorway: 110,
-        motorway_link: 80,
-        trunk: 90,
-        trunk_link: 70,
+        motorway: 130,
+        motorway_link: 90,
+        trunk: 110,
+        trunk_link: 80,
         primary: 80,
-        primary_link: 60,
-        secondary: 70,
-        secondary_link: 50,
+        primary_link: 70,
+        secondary: 80,
+        secondary_link: 60,
         tertiary: 50,
         tertiary_link: 40,
         residential: 30,
