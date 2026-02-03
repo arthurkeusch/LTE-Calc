@@ -1,7 +1,7 @@
 <template>
   <section class="mapWrap">
     <div class="map" ref="mapEl"></div>
-    <div v-if="roads.length" class="legend">
+    <div v-if="roads.length || buildings.length" class="legend">
       <div class="legendTitle">Road speed colors</div>
       <label class="legendToggle">
         <input
@@ -19,6 +19,22 @@
           <span>20 km/h</span>
           <span>130 km/h</span>
         </div>
+      </div>
+      <div class="legendDivider"></div>
+      <div class="legendTitle">Buildings</div>
+      <label class="legendToggle">
+        <input
+            class="legendCheckbox"
+            type="checkbox"
+            :checked="showBuildings"
+            :disabled="!canToggleBuildings"
+            @change="$emit('update:showBuildings', $event.target.checked)"
+        />
+        <span>Show buildings</span>
+      </label>
+      <div v-if="showBuildings" class="legendKey">
+        <span class="legendSwatch"></span>
+        <span>Building footprint</span>
       </div>
     </div>
   </section>
@@ -42,23 +58,33 @@ const props = defineProps({
     type: Array,
     default: () => []
   },
+  buildings: {
+    type: Array,
+    default: () => []
+  },
   showRoads: {
+    type: Boolean,
+    default: true
+  },
+  showBuildings: {
     type: Boolean,
     default: true
   }
 })
 
-const emit = defineEmits(['update:selected', 'update:showRoads'])
+const emit = defineEmits(['update:selected', 'update:showRoads', 'update:showBuildings'])
 
 const mapEl = ref(null)
 const zoneHalfSideM = computed(() => (Number(props.zoneSideKm) * 1000) / 2)
-const {showRoads, roads} = toRefs(props)
+const {showRoads, roads, showBuildings, buildings} = toRefs(props)
 const canToggleRoads = computed(() => roads.value.length > 0)
+const canToggleBuildings = computed(() => buildings.value.length > 0)
 
 let map = null
 let centerDot = null
 let square = null
 let roadLayers = L.layerGroup()
+let buildingLayers = L.layerGroup()
 
 function boundsFromCenter(lat, lng, halfSideM) {
   const latRad = (lat * Math.PI) / 180
@@ -119,6 +145,19 @@ function updateLayers(fit = true) {
     })
   }
 
+  buildingLayers.clearLayers()
+  if (props.showBuildings) {
+    props.buildings.forEach(building => {
+      L.polygon(building.geometry, {
+        color: "#F5C542",
+        weight: 1,
+        opacity: 0.8,
+        fillColor: "#F5C542",
+        fillOpacity: 0.35
+      }).addTo(buildingLayers)
+    })
+  }
+
   if (fit) map.fitBounds(b, {padding: [18, 18], animate: true})
 }
 
@@ -138,6 +177,7 @@ onMounted(() => {
   }).addTo(map)
 
   roadLayers.addTo(map)
+  buildingLayers.addTo(map)
 
   map.on("click", onMapClick)
 
@@ -170,6 +210,14 @@ watch(() => props.roads, () => {
 }, {deep: true})
 
 watch(() => props.showRoads, () => {
+  updateLayers(false)
+})
+
+watch(() => props.buildings, () => {
+  updateLayers(false)
+}, {deep: true})
+
+watch(() => props.showBuildings, () => {
   updateLayers(false)
 })
 </script>
@@ -235,23 +283,32 @@ watch(() => props.showRoads, () => {
   background: linear-gradient(90deg, hsl(240, 100%, 50%), hsl(0, 100%, 50%));
 }
 
-.legendTicks {
-  display: grid;
-  grid-template-columns: repeat(8, 1fr);
-  font-size: 9px;
-  opacity: 0.85;
-  text-align: center;
-}
-
-.legendTick {
-  white-space: nowrap;
-}
-
 .legendRange {
   display: flex;
   justify-content: space-between;
   font-size: 9px;
   opacity: 0.7;
+}
+
+.legendDivider {
+  height: 1px;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.legendKey {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  opacity: 0.85;
+}
+
+.legendSwatch {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  background: rgba(245, 197, 66, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.2);
 }
 
 @media (max-width: 900px) {

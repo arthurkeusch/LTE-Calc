@@ -53,6 +53,58 @@ out body geom;`
     return {speeds, roads}
 }
 
+export async function fetchBuildingsInSquare(lat, lng, sideKm, signal) {
+    const halfSideM = (Number(sideKm) * 1000) / 2
+    const latRad = (lat * Math.PI) / 180
+    const dLat = (halfSideM / 6378137) * (180 / Math.PI)
+    const dLng = dLat / Math.cos(latRad)
+    const south = lat - dLat
+    const north = lat + dLat
+    const west = lng - dLng
+    const east = lng + dLng
+
+    const query = `[out:json][timeout:25];
+(
+  way["building"](${south},${west},${north},${east});
+);
+out body geom;`
+
+    const url = "https://overpass-api.de/api/interpreter"
+    const res = await fetch(url, {
+        method: "POST",
+        headers: {"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8"},
+        body: "data=" + encodeURIComponent(query),
+        signal
+    })
+
+    if (!res.ok) {
+        const t = await res.text().catch(() => "")
+        throw new Error(`Overpass error (${res.status}) ${t ? "- " + t.slice(0, 140) : ""}`.trim())
+    }
+
+    const json = await res.json()
+    const els = Array.isArray(json?.elements) ? json.elements : []
+
+    const buildings = []
+    const areas = []
+    for (const el of els) {
+        if (el.type !== "way") continue
+        if (!el.geometry || el.geometry.length < 3) continue
+        const geometry = el.geometry.map(p => [p.lat, p.lon])
+        const area = polygonAreaMeters2(geometry)
+        if (Number.isFinite(area) && area > 0) {
+            buildings.push({
+                id: el.id,
+                area,
+                geometry
+            })
+            areas.push(area)
+        }
+    }
+
+    return {areas, buildings}
+}
+
 function speedFromTags(tags, highway) {
     const ms = tags.maxspeed
     const parsed = parseMaxspeed(ms)
@@ -145,6 +197,53 @@ export function computeSpeedStats(values) {
     }
 }
 
+export function computeBuildingStats(values) {
+    const v = (values || []).filter(n => Number.isFinite(n)).slice().sort((a, b) => a - b)
+    const count = v.length
+    if (count === 0) {
+        return {
+            count: 0,
+            min: 0,
+            max: 0,
+            avg: 0,
+            deciles: [],
+            hist10: []
+        }
+    }
+
+    const min = v[0]
+    const max = v[count - 1]
+    const avg = v.reduce((s, x) => s + x, 0) / count
+
+    const deciles = []
+    for (let i = 1; i <= 9; i++) deciles.push(percentileSorted(v, i / 10))
+
+    const edges = [min, ...deciles, max]
+    const hist10 = new Array(10).fill(0)
+    for (const x of v) {
+        let idx = 9
+        for (let i = 0; i < 10; i++) {
+            const a = edges[i]
+            const b = edges[i + 1]
+            const last = i === 9
+            if ((x >= a && x < b) || (last && x <= b)) {
+                idx = i
+                break
+            }
+        }
+        hist10[idx]++
+    }
+
+    return {
+        count,
+        min,
+        max,
+        avg,
+        deciles,
+        hist10
+    }
+}
+
 function percentileSorted(arr, p) {
     const n = arr.length
     if (n === 0) return 0
@@ -154,4 +253,27 @@ function percentileSorted(arr, p) {
     if (lo === hi) return arr[lo]
     const w = x - lo
     return arr[lo] * (1 - w) + arr[hi] * w
+}
+
+function polygonAreaMeters2(latlngs) {
+    const pts = Array.isArray(latlngs) ? latlngs : []
+    if (pts.length < 3) return 0
+
+    const lat0 = pts.reduce((s, p) => s + p[0], 0) / pts.length
+    const lat0Rad = (lat0 * Math.PI) / 180
+    const toRad = Math.PI / 180
+    const R = 6378137
+
+    let area = 0
+    for (let i = 0; i < pts.length; i++) {
+        const a = pts[i]
+        const b = pts[(i + 1) % pts.length]
+        const ax = a[1] * toRad * Math.cos(lat0Rad) * R
+        const ay = a[0] * toRad * R
+        const bx = b[1] * toRad * Math.cos(lat0Rad) * R
+        const by = b[0] * toRad * R
+        area += ax * by - bx * ay
+    }
+
+    return Math.abs(area) / 2
 }
