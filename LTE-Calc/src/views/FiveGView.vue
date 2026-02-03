@@ -9,6 +9,7 @@
     />
     <FiveGMap
         v-model:selected="selected"
+        v-model:showRoads="showRoads"
         :zoneSideKm="zoneSideKm"
         :roads="roadsData"
     />
@@ -23,6 +24,7 @@ import {fetchRoadSpeedsInSquare, computeSpeedStats} from "@/utils/overpassSpeed"
 
 const zoneSideKm = ref(1.0)
 const selected = ref(null)
+const showRoads = ref(true)
 
 const speedStats = ref(null)
 const roadsData = ref([])
