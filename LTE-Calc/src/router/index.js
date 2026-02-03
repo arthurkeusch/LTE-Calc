@@ -2,6 +2,7 @@ import {createRouter, createWebHistory} from 'vue-router'
 import HomeView from '../views/HomeView.vue'
 import HataUplinkView from "@/views/HataUplinkView.vue";
 import LteThroughputView from "@/views/LteThroughputView.vue";
+import FiveGView from "@/views/FiveGView.vue";
 
 const router = createRouter({
     history: createWebHistory(import.meta.env.BASE_URL),
@@ -20,6 +21,11 @@ const router = createRouter({
             path: '/hata_uplink',
             name: 'hata_uplink',
             component: HataUplinkView,
+        },
+        {
+            path: '/FiveG',
+            name: 'FiveG',
+            component: FiveGView,
         }
     ],
 })

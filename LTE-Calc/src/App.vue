@@ -27,6 +27,13 @@ const route = useRoute()
           >
             Cost Hata
           </RouterLink>
+          <RouterLink
+              :to="{ name: 'FiveG' }"
+              class="link"
+              :class="{ active: route.name === 'FiveG' }"
+          >
+            5G NR
+          </RouterLink>
         </nav>
 
         <div class="rightSpacer"/>

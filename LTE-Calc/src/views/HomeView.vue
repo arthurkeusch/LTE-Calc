@@ -10,6 +10,10 @@ function goLte() {
 function goHata() {
   router.push({name: "hata_uplink"})
 }
+
+function goNr() {
+  router.push({name: "FiveG"})
+}
 </script>
 
 <template>
@@ -37,6 +41,17 @@ function goHata() {
           <p>
             Uplink received power estimation using Cost Hata model for
             urban and suburban environments.
+          </p>
+          <span class="cta">Open simulator →</span>
+        </div>
+
+        <div class="card" @click="goNr">
+          <div class="badge">5G NR</div>
+          <h2>5G NR Setting Simulator</h2>
+          <p>
+            Area-based 5G NR configuration tool selecting frequency band,
+            sub-carrier spacing and cyclic prefix according to mobility,
+            density and environment.
           </p>
           <span class="cta">Open simulator →</span>
         </div>
@@ -81,7 +96,7 @@ h1 {
 
 @media (min-width: 720px) {
   .cards {
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: repeat(3, 1fr);
   }
 }
 
