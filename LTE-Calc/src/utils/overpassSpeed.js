@@ -81,26 +81,40 @@ out tags geom;`
 
 const BACKEND_BASE_URL = "https://lte-calc.arthur-keusch.fr:3000"
 const CACHE_BUILDING_HEIGHTS_ENDPOINT = `${BACKEND_BASE_URL}/cache/building-heights`
-const CACHE_HEIGHTS_QUERY_BATCH = 200
+const CACHE_HEIGHTS_QUERY_BATCH = 1000
+const CACHE_HEIGHTS_MAX_CONCURRENCY = 10
 
-export async function loadBuildingHeightsFromCache(ids, signal) {
+export async function loadBuildingHeightsFromCache(ids, signal, onBatch) {
     if (!Array.isArray(ids) || ids.length === 0) return {}
     const out = {}
+    const batches = []
     for (let i = 0; i < ids.length; i += CACHE_HEIGHTS_QUERY_BATCH) {
         const batch = ids.slice(i, i + CACHE_HEIGHTS_QUERY_BATCH)
         const params = new URLSearchParams({ids: batch.join(",")})
         const url = `${CACHE_BUILDING_HEIGHTS_ENDPOINT}?${params.toString()}`
+        batches.push({batch, url})
+    }
+
+    const totalBatches = batches.length || 1
+    let completed = 0
+    await runWithConcurrencyLimit(batches, CACHE_HEIGHTS_MAX_CONCURRENCY, async ({url}) => {
         try {
             const res = await fetch(url, {signal})
-            if (!res.ok) continue
-            const json = await res.json()
-            if (json?.heights && typeof json.heights === "object") {
-                Object.assign(out, json.heights)
+            if (res.ok) {
+                const json = await res.json()
+                if (json?.heights && typeof json.heights === "object") {
+                    Object.assign(out, json.heights)
+                }
             }
         } catch {
             // ignore cache errors
         }
-    }
+        completed += 1
+        if (typeof onBatch === "function") {
+            const progress = totalBatches ? completed / totalBatches : 1
+            onBatch({...out}, progress)
+        }
+    })
     return out
 }
 

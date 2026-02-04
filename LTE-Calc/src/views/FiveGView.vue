@@ -163,8 +163,22 @@ function scheduleSpeedRefresh() {
         }
 
         const buildingIds = rawBuildings.map(b => b.id).filter(id => id !== undefined && id !== null)
-        const cachedHeights = await loadBuildingHeightsFromCache(buildingIds, aborter.signal)
-        const withCached = rawBuildings.map((b) => {
+        let withCached = rawBuildings.slice()
+        const cachedHeights = await loadBuildingHeightsFromCache(buildingIds, aborter.signal, (partialHeights, progress) => {
+          withCached = rawBuildings.map((b) => {
+            const cached = partialHeights?.[b.id]
+            const cachedNum = Number(cached)
+            if (Number.isFinite(cachedNum) && cachedNum > 0) return {...b, height: cachedNum}
+            return b
+          })
+          buildingsData.value = withCached
+          const heightValues = withCached.map(b => b.height).filter(n => Number.isFinite(n))
+          if (heightValues.length > 0) {
+            buildingHeightStats.value = computeHeightStats(heightValues)
+          }
+          if (Number.isFinite(progress)) heightProgress.value = Math.min(0.35, progress * 0.35)
+        })
+        withCached = rawBuildings.map((b) => {
           const cached = cachedHeights?.[b.id]
           const cachedNum = Number(cached)
           if (Number.isFinite(cachedNum) && cachedNum > 0) return {...b, height: cachedNum}
@@ -186,7 +200,9 @@ function scheduleSpeedRefresh() {
             buildingsData.value = mergedPartial
             const partialHeights = mergedPartial.map(b => b.height).filter(n => Number.isFinite(n))
             buildingHeightStats.value = computeHeightStats(partialHeights)
-            if (Number.isFinite(progress)) heightProgress.value = progress
+            if (Number.isFinite(progress)) {
+              heightProgress.value = Math.max(0.35, 0.35 + progress * 0.65)
+            }
           })
           const mergedMap = new Map(mergedMissing.map(b => [b.id, b]))
           const mergedAll = withCached.map(b => mergedMap.get(b.id) || b)
