@@ -81,8 +81,8 @@ out tags geom;`
 
 const BACKEND_BASE_URL = "https://lte-calc.arthur-keusch.fr:3000"
 const CACHE_BUILDING_HEIGHTS_ENDPOINT = `${BACKEND_BASE_URL}/cache/building-heights`
-const CACHE_HEIGHTS_QUERY_BATCH = 1000
-const CACHE_HEIGHTS_MAX_CONCURRENCY = 10
+const CACHE_BUILDING_HEIGHTS_STORE_ENDPOINT = `${BACKEND_BASE_URL}/cache/building-heights/store`
+const CACHE_HEIGHTS_QUERY_BATCH = 100000
 
 export async function loadBuildingHeightsFromCache(ids, signal, onBatch) {
     if (!Array.isArray(ids) || ids.length === 0) return {}
@@ -90,16 +90,19 @@ export async function loadBuildingHeightsFromCache(ids, signal, onBatch) {
     const batches = []
     for (let i = 0; i < ids.length; i += CACHE_HEIGHTS_QUERY_BATCH) {
         const batch = ids.slice(i, i + CACHE_HEIGHTS_QUERY_BATCH)
-        const params = new URLSearchParams({ids: batch.join(",")})
-        const url = `${CACHE_BUILDING_HEIGHTS_ENDPOINT}?${params.toString()}`
-        batches.push({batch, url})
+        batches.push({batch})
     }
 
     const totalBatches = batches.length || 1
     let completed = 0
-    await runWithConcurrencyLimit(batches, CACHE_HEIGHTS_MAX_CONCURRENCY, async ({url}) => {
+    await runWithConcurrencyLimit(batches, 1, async ({batch}) => {
         try {
-            const res = await fetch(url, {signal})
+            const res = await fetch(CACHE_BUILDING_HEIGHTS_ENDPOINT, {
+                method: "POST",
+                headers: {"Content-Type": "application/json"},
+                body: JSON.stringify({ids: batch}),
+                signal
+            })
             if (res.ok) {
                 const json = await res.json()
                 if (json?.heights && typeof json.heights === "object") {
@@ -123,7 +126,7 @@ export async function saveBuildingHeightsToCache(heights, signal) {
     const entries = Object.entries(heights)
     if (entries.length === 0) return
     try {
-        await fetch(CACHE_BUILDING_HEIGHTS_ENDPOINT, {
+        await fetch(CACHE_BUILDING_HEIGHTS_STORE_ENDPOINT, {
             method: "POST",
             headers: {"Content-Type": "application/json"},
             body: JSON.stringify({heights}),

@@ -59,10 +59,8 @@ app.get("/", (req, res) => {
     res.json({status: "ok"});
 });
 
-app.get("/cache/building-heights", async (req, res) => {
-    const idsRaw = (req.query.ids || "").toString().trim();
-    if (!idsRaw) return res.json({heights: {}});
-    const ids = idsRaw.split(",").map((id) => id.trim()).filter(Boolean);
+app.post("/cache/building-heights", async (req, res) => {
+    const ids = Array.isArray(req.body?.ids) ? req.body.ids : [];
     if (!ids.length) return res.json({heights: {}});
 
     const keys = ids.map((id) => heightKey(id));
@@ -76,7 +74,7 @@ app.get("/cache/building-heights", async (req, res) => {
     res.json({heights});
 });
 
-app.post("/cache/building-heights", async (req, res) => {
+app.post("/cache/building-heights/store", async (req, res) => {
     const heights = req.body?.heights;
     if (!heights || typeof heights !== "object") {
         return res.status(400).json({error: "Invalid heights payload"});
