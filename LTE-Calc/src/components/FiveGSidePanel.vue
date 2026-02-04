@@ -445,10 +445,10 @@ const yTicks = computed(() => {
 
 function bXFromArea(value) {
   if (!props.buildingStats) return plotLeft
-  const min = props.buildingStats.min
-  const max = props.buildingStats.max
-  if (max <= min) return plotLeft
-  const t = (value - min) / (max - min)
+  const min = Math.max(1, props.buildingStats.min)
+  const max = Math.max(min + 1, props.buildingStats.max)
+  if (value <= 0 || max <= min) return plotLeft
+  const t = (Math.log10(value) - Math.log10(min)) / (Math.log10(max) - Math.log10(min))
   const x = plotLeft + t * (plotRight - plotLeft)
   return Math.min(plotRight, Math.max(plotLeft, x))
 }
@@ -474,15 +474,14 @@ function bBarH5(v) {
 
 const bXTicks = computed(() => {
   if (!props.buildingStats) return []
-  const min = Math.round(props.buildingStats.min)
-  const max = Math.round(props.buildingStats.max)
+  const min = Math.max(1, props.buildingStats.min)
+  const max = Math.max(min + 1, props.buildingStats.max)
   if (max <= min) return [{ value: min, x: plotLeft }, { value: max, x: plotRight }]
   const n = 5
-  const step = Math.max(1, Math.round((max - min) / n))
+  const step = (Math.log10(max) - Math.log10(min)) / n
   const vals = []
-  for (let v = min; v <= max; v += step) vals.push(v)
-  if (vals[vals.length - 1] !== max) vals.push(max)
-  return vals.map(v => ({ value: v, x: bXFromArea(v) }))
+  for (let i = 0; i <= n; i++) vals.push(Math.pow(10, Math.log10(min) + i * step))
+  return vals.map(v => ({ value: Math.round(v), x: bXFromArea(v) }))
 })
 
 const bYTicks = computed(() => {
@@ -500,10 +499,10 @@ const bYTicks = computed(() => {
 
 function hXFromHeight(value) {
   if (!props.buildingHeightStats) return plotLeft
-  const min = props.buildingHeightStats.min
-  const max = props.buildingHeightStats.max
-  if (max <= min) return plotLeft
-  const t = (value - min) / (max - min)
+  const min = Math.max(1, props.buildingHeightStats.min)
+  const max = Math.max(min + 1, props.buildingHeightStats.max)
+  if (value <= 0 || max <= min) return plotLeft
+  const t = (Math.log10(value) - Math.log10(min)) / (Math.log10(max) - Math.log10(min))
   const x = plotLeft + t * (plotRight - plotLeft)
   return Math.min(plotRight, Math.max(plotLeft, x))
 }
@@ -529,15 +528,14 @@ function hBarH5(v) {
 
 const hXTicks = computed(() => {
   if (!props.buildingHeightStats) return []
-  const min = Math.round(props.buildingHeightStats.min)
-  const max = Math.round(props.buildingHeightStats.max)
+  const min = Math.max(1, props.buildingHeightStats.min)
+  const max = Math.max(min + 1, props.buildingHeightStats.max)
   if (max <= min) return [{ value: min, x: plotLeft }, { value: max, x: plotRight }]
   const n = 5
-  const step = Math.max(1, Math.round((max - min) / n))
+  const step = (Math.log10(max) - Math.log10(min)) / n
   const vals = []
-  for (let v = min; v <= max; v += step) vals.push(v)
-  if (vals[vals.length - 1] !== max) vals.push(max)
-  return vals.map(v => ({ value: v, x: hXFromHeight(v) }))
+  for (let i = 0; i <= n; i++) vals.push(Math.pow(10, Math.log10(min) + i * step))
+  return vals.map(v => ({ value: Math.round(v), x: hXFromHeight(v) }))
 })
 
 const hYTicks = computed(() => {

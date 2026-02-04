@@ -282,10 +282,12 @@ function formatSpeed(value) {
 }
 
 function heightToColor(height, min, max) {
-  if (!Number.isFinite(height) || !Number.isFinite(min) || !Number.isFinite(max) || max <= min) {
+  if (!Number.isFinite(height) || !Number.isFinite(min) || !Number.isFinite(max) || max <= min || height <= 0) {
     return "#F5C542"
   }
-  const t = Math.max(0, Math.min(1, (height - min) / (max - min)))
+  const safeMin = Math.max(1, min)
+  const safeMax = Math.max(safeMin + 1, max)
+  const t = Math.max(0, Math.min(1, (Math.log10(height) - Math.log10(safeMin)) / (Math.log10(safeMax) - Math.log10(safeMin))))
   const hue = (1 - t) * 220
   return `hsl(${hue}, 90%, 55%)`
 }

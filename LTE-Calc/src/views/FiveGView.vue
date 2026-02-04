@@ -288,6 +288,29 @@ function scheduleSpeedRefresh() {
           return
         }
 
+        let cacheBuffer = {}
+        let cacheBufferCount = 0
+        const cachedIds = new Set()
+        let flushInFlight = Promise.resolve()
+        const flushCacheBuffer = (force = false) => {
+          if (!force && cacheBufferCount < 500) return
+          if (cacheBufferCount === 0) return
+          const payload = cacheBuffer
+          cacheBuffer = {}
+          cacheBufferCount = 0
+          flushInFlight = flushInFlight
+              .then(() => saveBuildingHeightsToCache(payload, aborter.signal))
+              .catch(() => {})
+        }
+        const addToCacheBuffer = (building) => {
+          if (!building || building.id === undefined || building.id === null) return
+          if (!Number.isFinite(building.height) || building.height <= 0) return
+          if (cachedIds.has(building.id)) return
+          cachedIds.add(building.id)
+          cacheBuffer[building.id] = building.height
+          cacheBufferCount += 1
+        }
+
         const buildingIds = rawBuildings.map(b => b.id).filter(id => id !== undefined && id !== null)
         let withCached = rawBuildings.slice()
         const cachedHeights = await loadBuildingHeightsFromCache(buildingIds, aborter.signal, (partialHeights, progress) => {
@@ -329,6 +352,8 @@ function scheduleSpeedRefresh() {
             if (Number.isFinite(progress)) {
               heightProgress.value = Math.max(0.35, 0.35 + progress * 0.65)
             }
+            for (const b of partial) addToCacheBuffer(b)
+            flushCacheBuffer(false)
           })
           const mergedMap = new Map(mergedMissing.map(b => [b.id, b]))
           const mergedAll = withCached.map(b => mergedMap.get(b.id) || b)
@@ -336,11 +361,9 @@ function scheduleSpeedRefresh() {
           const mergedHeights = mergedAll.map(b => b.height).filter(n => Number.isFinite(n))
           buildingHeightStats.value = computeHeightStats(mergedHeights)
           heightProgress.value = 1
-          const toCache = {}
-          for (const b of mergedMissing) {
-            if (Number.isFinite(b.height)) toCache[b.id] = b.height
-          }
-          await saveBuildingHeightsToCache(toCache, aborter.signal)
+          for (const b of mergedMissing) addToCacheBuffer(b)
+          flushCacheBuffer(true)
+          await flushInFlight
         } catch (e) {
           if (e?.name !== "AbortError") {
             const currentHeights = buildingsData.value.map(b => b.height).filter(n => Number.isFinite(n))
