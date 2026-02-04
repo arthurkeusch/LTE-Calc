@@ -35,6 +35,8 @@ import {
   fetchRoadSpeedsInSquare,
   computeSpeedStats,
   fetchBuildingsInSquare,
+  loadBuildingHeightsFromCache,
+  saveBuildingHeightsToCache,
   computeBuildingStats,
   computeHeightStats,
   applyAltimetryHeights
@@ -106,64 +108,106 @@ function scheduleSpeedRefresh() {
     heightProgress.value = 0
 
     try {
-      const roadsPromise = fetchRoadSpeedsInSquare(
-          selected.value.lat,
-          selected.value.lng,
-          zoneSideKm.value,
-          aborter.signal
-      ).then(({speeds, roads}) => {
-        speedStats.value = computeSpeedStats(speeds)
-        roadsData.value = roads
-        speedLoading.value = false
-        speedProgress.value = 1
-      }).catch((err) => {
-        if (err?.name !== "AbortError") {
-          speedError.value = err?.message || "Failed to fetch road speeds"
-          speedStats.value = null
-          roadsData.value = []
+      const roadsPromise = (async () => {
+        try {
+          const {speeds, roads} = await fetchRoadSpeedsInSquare(
+              selected.value.lat,
+              selected.value.lng,
+              zoneSideKm.value,
+              aborter.signal
+          )
+          speedStats.value = computeSpeedStats(speeds)
+          roadsData.value = roads
           speedLoading.value = false
           speedProgress.value = 1
+        } catch (err) {
+          if (err?.name !== "AbortError") {
+            speedError.value = err?.message || "Failed to fetch road speeds"
+            speedStats.value = null
+            roadsData.value = []
+            speedLoading.value = false
+            speedProgress.value = 1
+          }
         }
-      })
+      })()
 
-      const buildingsPromise = fetchBuildingsInSquare(
-          selected.value.lat,
-          selected.value.lng,
-          zoneSideKm.value,
-          aborter.signal
-      ).then(({areas, buildings: rawBuildings}) => {
-        buildingStats.value = computeBuildingStats(areas)
-        buildingsData.value = rawBuildings
-        buildingLoading.value = false
-        buildingProgress.value = 1
-        return rawBuildings
-      }).catch((err) => {
-        if (err?.name !== "AbortError") {
-          buildingError.value = err?.message || "Failed to fetch buildings"
-          buildingStats.value = null
-          buildingsData.value = []
+      const buildingsPromise = (async () => {
+        try {
+          const {areas, buildings: rawBuildings} = await fetchBuildingsInSquare(
+              selected.value.lat,
+              selected.value.lng,
+              zoneSideKm.value,
+              aborter.signal
+          )
+          buildingStats.value = computeBuildingStats(areas)
+          buildingsData.value = rawBuildings
           buildingLoading.value = false
           buildingProgress.value = 1
+          return rawBuildings
+        } catch (err) {
+          if (err?.name !== "AbortError") {
+            buildingError.value = err?.message || "Failed to fetch buildings"
+            buildingStats.value = null
+            buildingsData.value = []
+            buildingLoading.value = false
+            buildingProgress.value = 1
+          }
+          return []
         }
-        return []
-      })
+      })()
 
       const heightsPromise = buildingsPromise.then(async (rawBuildings) => {
-        try {
-          const merged = await applyAltimetryHeights(rawBuildings, aborter.signal, (partial, progress) => {
-            buildingsData.value = partial
-            const heightValues = partial.map(b => b.height).filter(n => Number.isFinite(n))
-            buildingHeightStats.value = computeHeightStats(heightValues)
-            if (Number.isFinite(progress)) heightProgress.value = progress
-          })
-          buildingsData.value = merged
-          const heightValues = merged.map(b => b.height).filter(n => Number.isFinite(n))
+        if (!Array.isArray(rawBuildings) || rawBuildings.length === 0) {
+          heightProgress.value = 1
+          return
+        }
+
+        const buildingIds = rawBuildings.map(b => b.id).filter(id => id !== undefined && id !== null)
+        const cachedHeights = await loadBuildingHeightsFromCache(buildingIds, aborter.signal)
+        const withCached = rawBuildings.map((b) => {
+          const cached = cachedHeights?.[b.id]
+          const cachedNum = Number(cached)
+          if (Number.isFinite(cachedNum) && cachedNum > 0) return {...b, height: cachedNum}
+          return b
+        })
+        buildingsData.value = withCached
+
+        const missing = withCached.filter(b => !Number.isFinite(b.height) || b.height <= 0)
+        if (missing.length === 0) {
+          const heightValues = withCached.map(b => b.height).filter(n => Number.isFinite(n))
           buildingHeightStats.value = computeHeightStats(heightValues)
           heightProgress.value = 1
+          return
+        }
+        try {
+          const mergedMissing = await applyAltimetryHeights(missing, aborter.signal, (partial, progress) => {
+            const partialMap = new Map(partial.map(b => [b.id, b]))
+            const mergedPartial = withCached.map(b => partialMap.get(b.id) || b)
+            buildingsData.value = mergedPartial
+            const partialHeights = mergedPartial.map(b => b.height).filter(n => Number.isFinite(n))
+            buildingHeightStats.value = computeHeightStats(partialHeights)
+            if (Number.isFinite(progress)) heightProgress.value = progress
+          })
+          const mergedMap = new Map(mergedMissing.map(b => [b.id, b]))
+          const mergedAll = withCached.map(b => mergedMap.get(b.id) || b)
+          buildingsData.value = mergedAll
+          const mergedHeights = mergedAll.map(b => b.height).filter(n => Number.isFinite(n))
+          buildingHeightStats.value = computeHeightStats(mergedHeights)
+          heightProgress.value = 1
+          const toCache = {}
+          for (const b of mergedMissing) {
+            if (Number.isFinite(b.height)) toCache[b.id] = b.height
+          }
+          await saveBuildingHeightsToCache(toCache, aborter.signal)
         } catch (e) {
           if (e?.name !== "AbortError") {
-            buildingHeightError.value = e?.message || "Failed to fetch altimetry heights"
-            buildingHeightStats.value = null
+            const currentHeights = buildingsData.value.map(b => b.height).filter(n => Number.isFinite(n))
+            if (currentHeights.length === 0) {
+              buildingHeightError.value = e?.message || "Failed to fetch altimetry heights"
+              buildingHeightStats.value = null
+            } else {
+              buildingHeightStats.value = computeHeightStats(currentHeights)
+            }
             heightProgress.value = 1
           }
         }

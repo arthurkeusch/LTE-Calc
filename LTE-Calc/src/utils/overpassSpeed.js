@@ -79,14 +79,57 @@ out tags geom;`
     return {areas, buildings}
 }
 
+const BACKEND_BASE_URL = "https://lte-calc.arthur-keusch.fr:3000"
+const CACHE_BUILDING_HEIGHTS_ENDPOINT = `${BACKEND_BASE_URL}/cache/building-heights`
+const CACHE_HEIGHTS_QUERY_BATCH = 200
+
+export async function loadBuildingHeightsFromCache(ids, signal) {
+    if (!Array.isArray(ids) || ids.length === 0) return {}
+    const out = {}
+    for (let i = 0; i < ids.length; i += CACHE_HEIGHTS_QUERY_BATCH) {
+        const batch = ids.slice(i, i + CACHE_HEIGHTS_QUERY_BATCH)
+        const params = new URLSearchParams({ids: batch.join(",")})
+        const url = `${CACHE_BUILDING_HEIGHTS_ENDPOINT}?${params.toString()}`
+        try {
+            const res = await fetch(url, {signal})
+            if (!res.ok) continue
+            const json = await res.json()
+            if (json?.heights && typeof json.heights === "object") {
+                Object.assign(out, json.heights)
+            }
+        } catch {
+            // ignore cache errors
+        }
+    }
+    return out
+}
+
+export async function saveBuildingHeightsToCache(heights, signal) {
+    if (!heights || typeof heights !== "object") return
+    const entries = Object.entries(heights)
+    if (entries.length === 0) return
+    try {
+        await fetch(CACHE_BUILDING_HEIGHTS_ENDPOINT, {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({heights}),
+            signal
+        })
+    } catch {
+        return
+    }
+}
+
 const OVERPASS_PRIMARY = "https://overpass-api.de/api/interpreter"
 const OVERPASS_RETRIES = 3
 const OVERPASS_RETRY_DELAY_MS = 500
 
 const ALTI_ENDPOINT = "https://data.geopf.fr/altimetrie/1.0/calcul/alti/rest/elevation.json"
 const ALTI_RESOURCE_ID = "ign_lidar_hd_mnx_multi_wld"
-const ALTI_BATCH_SIZE = 50
+const ALTI_BATCH_SIZE = 1000
 const ALTI_MAX_CONCURRENCY = 5
+const ALTI_RETRIES = 3
+const ALTI_RETRY_DELAY_MS = 500
 
 async function fetchOverpassJson(query, signal) {
     let lastError = null
@@ -364,44 +407,67 @@ async function fetchAltimetryHeights(points, signal, onBatch) {
     }
 
     let completed = 0
+    let anySuccess = false
+    let lastError = null
     await runWithConcurrencyLimit(batches, ALTI_MAX_CONCURRENCY, async ({batch, offset}) => {
-        const lon = batch.map(p => p.lng).join("|")
-        const lat = batch.map(p => p.lat).join("|")
-        const body = {
-            lon,
-            lat,
-            resource: ALTI_RESOURCE_ID,
-            delimiter: "|",
-            measures: "true",
-            zonly: "false"
-        }
-        const res = await fetch(ALTI_ENDPOINT, {
-            method: "POST",
-            headers: {"Content-Type": "application/json"},
-            body: JSON.stringify(body),
-            signal
-        })
-        if (!res.ok) {
-            const t = await res.text().catch(() => "")
-            throw new Error(`Altimetry error (${res.status}) ${t ? "- " + t.slice(0, 140) : ""}`.trim())
-        }
-        const json = await res.json()
-        const elevations = Array.isArray(json?.elevations) ? json.elevations : []
-        const batchHeights = new Array(batch.length).fill(null)
-        for (let j = 0; j < batch.length; j++) {
-            const e = elevations[j]
-            if (!e) continue
-            const h = heightFromAltimetry(e)
-            if (Number.isFinite(h)) {
-                out[offset + j] = h
-                batchHeights[j] = h
+        let batchHeights = new Array(batch.length).fill(null)
+        let success = false
+        for (let attempt = 1; attempt <= ALTI_RETRIES; attempt++) {
+            try {
+                const lon = batch.map(p => p.lng).join("|")
+                const lat = batch.map(p => p.lat).join("|")
+                const body = {
+                    lon,
+                    lat,
+                    resource: ALTI_RESOURCE_ID,
+                    delimiter: "|",
+                    measures: "true",
+                    zonly: "false"
+                }
+                const res = await fetch(ALTI_ENDPOINT, {
+                    method: "POST",
+                    headers: {"Content-Type": "application/json"},
+                    body: JSON.stringify(body),
+                    signal
+                })
+                if (!res.ok) {
+                    const t = await res.text().catch(() => "")
+                    throw new Error(`Altimetry error (${res.status}) ${t ? "- " + t.slice(0, 140) : ""}`.trim())
+                }
+                const json = await res.json()
+                const elevations = Array.isArray(json?.elevations) ? json.elevations : []
+                batchHeights = new Array(batch.length).fill(null)
+                for (let j = 0; j < batch.length; j++) {
+                    const e = elevations[j]
+                    if (!e) continue
+                    const h = heightFromAltimetry(e)
+                    if (Number.isFinite(h)) {
+                        out[offset + j] = h
+                        batchHeights[j] = h
+                    }
+                }
+                success = true
+                anySuccess = true
+                break
+            } catch (err) {
+                if (err?.name === "AbortError") throw err
+                lastError = err
+                if (attempt < ALTI_RETRIES) {
+                    await delay(ALTI_RETRY_DELAY_MS * attempt, signal)
+                }
             }
         }
         completed += 1
         if (typeof onBatch === "function") {
             onBatch(offset, batchHeights, completed, batches.length)
         }
+        if (!success && lastError) {
+            // continue without throwing: we only fail if all batches fail
+        }
     })
+    if (!anySuccess) {
+        throw lastError || new Error("Failed to fetch altimetry data")
+    }
     return out
 }
 
