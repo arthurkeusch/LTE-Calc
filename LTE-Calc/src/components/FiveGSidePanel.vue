@@ -175,6 +175,75 @@
             </div>
           </div>
         </div>
+
+        <div class="divider"></div>
+
+        <div class="section">
+          <div class="sTitle">Building height distribution</div>
+
+          <div v-if="!selected" class="muted">
+            Select a point to compute building heights.
+          </div>
+
+          <div v-else>
+            <div v-if="buildingHeightLoading" class="muted">Loading heights...</div>
+            <div v-else-if="buildingHeightError" class="error">{{ buildingHeightError }}</div>
+            <div v-else-if="!buildingHeightStats || buildingHeightStats.count === 0" class="muted">
+              No building height data found in this area.
+            </div>
+            <div v-else class="speedCard">
+              <div class="speedTop">
+                <div class="speedMetric">
+                  <div class="mLabel">Average height</div>
+                  <div class="mValue">{{ buildingHeightStats.avg.toFixed(1) }} m</div>
+                </div>
+                <div class="speedMeta">
+                  <div class="mSmall">{{ buildingHeightStats.count }} buildings</div>
+                  <div class="mSmall">min {{ buildingHeightStats.min.toFixed(1) }} / max {{ buildingHeightStats.max.toFixed(1) }}</div>
+                </div>
+              </div>
+
+              <div class="chartWrap">
+                <svg class="chart" viewBox="0 0 260 130" preserveAspectRatio="none">
+                  <g>
+                    <line :x1="padL" :y1="plotBottom" :x2="plotRight" :y2="plotBottom" class="axis" />
+                    <line :x1="padL" :y1="plotTop" :x2="padL" :y2="plotBottom" class="axis" />
+
+                    <g v-for="t in hXTicks" :key="'hx'+t.value">
+                      <line :x1="t.x" :y1="plotBottom" :x2="t.x" :y2="plotBottom + 4" class="tickLine" />
+                      <text :x="t.x" :y="plotBottom + 14" text-anchor="middle" class="tickText">{{ t.value }}</text>
+                    </g>
+
+                    <g v-for="t in hYTicks" :key="'hy'+t.value">
+                      <line :x1="padL - 4" :y1="t.y" :x2="padL" :y2="t.y" class="tickLine" />
+                      <text :x="padL - 6" :y="t.y + 3" text-anchor="end" class="tickText">{{ t.value }}</text>
+                      <line :x1="padL" :y1="t.y" :x2="plotRight" :y2="t.y" class="gridLine" />
+                    </g>
+                  </g>
+
+                  <line
+                      :x1="hXFromHeight(buildingHeightStats.avg)"
+                      :y1="plotTop"
+                      :x2="hXFromHeight(buildingHeightStats.avg)"
+                      :y2="plotBottom"
+                      class="avgLine"
+                  />
+
+                  <g v-for="(b, i) in hHist5" :key="'hb'+i">
+                    <rect
+                        :x="barX5(i)"
+                        :y="plotBottom - hBarH5(b)"
+                        :width="barW5"
+                        :height="hBarH5(b)"
+                        class="bar"
+                        rx="4"
+                    />
+                  </g>
+                </svg>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
 
       <div class="foot">
@@ -197,7 +266,10 @@ const props = defineProps({
   speedError: { type: String, default: null },
   buildingStats: { type: Object, default: null },
   buildingLoading: { type: Boolean, default: false },
-  buildingError: { type: String, default: null }
+  buildingError: { type: String, default: null },
+  buildingHeightStats: { type: Object, default: null },
+  buildingHeightLoading: { type: Boolean, default: false },
+  buildingHeightError: { type: String, default: null }
 })
 
 defineEmits(["update:zoneSideKm"])
@@ -326,6 +398,61 @@ const bXTicks = computed(() => {
 
 const bYTicks = computed(() => {
   const maxY = bMaxHist5.value
+  const n = 4
+  const step = Math.max(1, Math.round(maxY / n))
+  const vals = []
+  for (let v = 0; v <= maxY; v += step) vals.push(v)
+  if (vals[vals.length - 1] !== maxY) vals.push(maxY)
+  return vals.map(v => ({
+    value: v,
+    y: plotBottom - (v / maxY) * (plotBottom - plotTop)
+  }))
+})
+
+function hXFromHeight(value) {
+  if (!props.buildingHeightStats) return plotLeft
+  const min = props.buildingHeightStats.min
+  const max = props.buildingHeightStats.max
+  if (max <= min) return plotLeft
+  const t = (value - min) / (max - min)
+  const x = plotLeft + t * (plotRight - plotLeft)
+  return Math.min(plotRight, Math.max(plotLeft, x))
+}
+
+const hHist5 = computed(() => {
+  const h = props.buildingHeightStats?.hist10
+  if (!Array.isArray(h) || h.length !== 10) return [0, 0, 0, 0, 0]
+  return [
+    h[0] + h[1],
+    h[2] + h[3],
+    h[4] + h[5],
+    h[6] + h[7],
+    h[8] + h[9]
+  ]
+})
+
+const hMaxHist5 = computed(() => Math.max(1, ...hHist5.value))
+
+function hBarH5(v) {
+  const h = (v / hMaxHist5.value) * (plotBottom - plotTop)
+  return Math.max(1, Math.min(plotBottom - plotTop, h))
+}
+
+const hXTicks = computed(() => {
+  if (!props.buildingHeightStats) return []
+  const min = Math.round(props.buildingHeightStats.min)
+  const max = Math.round(props.buildingHeightStats.max)
+  if (max <= min) return [{ value: min, x: plotLeft }, { value: max, x: plotRight }]
+  const n = 5
+  const step = Math.max(1, Math.round((max - min) / n))
+  const vals = []
+  for (let v = min; v <= max; v += step) vals.push(v)
+  if (vals[vals.length - 1] !== max) vals.push(max)
+  return vals.map(v => ({ value: v, x: hXFromHeight(v) }))
+})
+
+const hYTicks = computed(() => {
+  const maxY = hMaxHist5.value
   const n = 4
   const step = Math.max(1, Math.round(maxY / n))
   const vals = []

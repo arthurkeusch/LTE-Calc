@@ -36,6 +36,25 @@
         <span class="legendSwatch"></span>
         <span>Building footprint</span>
       </div>
+      <div class="legendDivider"></div>
+      <div class="legendTitle">Building heights</div>
+      <label class="legendToggle">
+        <input
+            class="legendCheckbox"
+            type="checkbox"
+            :checked="showBuildingHeights"
+            :disabled="!canToggleBuildingHeights"
+            @change="$emit('update:showBuildingHeights', $event.target.checked)"
+        />
+        <span>Color by height</span>
+      </label>
+      <div v-if="showBuildings && showBuildingHeights && heightRange" class="legendScale">
+        <div class="legendBar legendBarHeights"></div>
+        <div class="legendRange">
+          <span>{{ Math.round(heightRange.min) }} m</span>
+          <span>{{ Math.round(heightRange.max) }} m</span>
+        </div>
+      </div>
     </div>
   </section>
 </template>
@@ -62,6 +81,10 @@ const props = defineProps({
     type: Array,
     default: () => []
   },
+  showBuildingHeights: {
+    type: Boolean,
+    default: true
+  },
   showRoads: {
     type: Boolean,
     default: true
@@ -72,13 +95,19 @@ const props = defineProps({
   }
 })
 
-const emit = defineEmits(['update:selected', 'update:showRoads', 'update:showBuildings'])
+const emit = defineEmits(['update:selected', 'update:showRoads', 'update:showBuildings', 'update:showBuildingHeights'])
 
 const mapEl = ref(null)
 const zoneHalfSideM = computed(() => (Number(props.zoneSideKm) * 1000) / 2)
-const {showRoads, roads, showBuildings, buildings} = toRefs(props)
+const {showRoads, roads, showBuildings, buildings, showBuildingHeights} = toRefs(props)
 const canToggleRoads = computed(() => roads.value.length > 0)
 const canToggleBuildings = computed(() => buildings.value.length > 0)
+const heightRange = computed(() => {
+  const vals = (buildings.value || []).map(b => b.height).filter(n => Number.isFinite(n))
+  if (!vals.length) return null
+  return {min: Math.min(...vals), max: Math.max(...vals)}
+})
+const canToggleBuildingHeights = computed(() => showBuildings.value && !!heightRange.value)
 
 let map = null
 let centerDot = null
@@ -147,18 +176,31 @@ function updateLayers(fit = true) {
 
   buildingLayers.clearLayers()
   if (props.showBuildings) {
+    const range = heightRange.value
     props.buildings.forEach(building => {
+      const color = props.showBuildingHeights && range
+          ? heightToColor(building.height, range.min, range.max)
+          : "#F5C542"
       L.polygon(building.geometry, {
-        color: "#F5C542",
+        color,
         weight: 1,
         opacity: 0.8,
-        fillColor: "#F5C542",
+        fillColor: color,
         fillOpacity: 0.35
       }).addTo(buildingLayers)
     })
   }
 
   if (fit) map.fitBounds(b, {padding: [18, 18], animate: true})
+}
+
+function heightToColor(height, min, max) {
+  if (!Number.isFinite(height) || !Number.isFinite(min) || !Number.isFinite(max) || max <= min) {
+    return "#F5C542"
+  }
+  const t = Math.max(0, Math.min(1, (height - min) / (max - min)))
+  const hue = (1 - t) * 220
+  return `hsl(${hue}, 90%, 55%)`
 }
 
 function onMapClick(e) {
@@ -218,6 +260,10 @@ watch(() => props.buildings, () => {
 }, {deep: true})
 
 watch(() => props.showBuildings, () => {
+  updateLayers(false)
+})
+
+watch(() => props.showBuildingHeights, () => {
   updateLayers(false)
 })
 </script>
@@ -281,6 +327,10 @@ watch(() => props.showBuildings, () => {
   border-radius: 999px;
   border: 1px solid rgba(255, 255, 255, 0.2);
   background: linear-gradient(90deg, hsl(240, 100%, 50%), hsl(0, 100%, 50%));
+}
+
+.legendBarHeights {
+  background: linear-gradient(90deg, hsl(220, 90%, 55%), hsl(0, 90%, 55%));
 }
 
 .legendRange {

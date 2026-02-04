@@ -9,11 +9,15 @@
         :buildingStats="buildingStats"
         :buildingLoading="buildingLoading"
         :buildingError="buildingError"
+        :buildingHeightStats="buildingHeightStats"
+        :buildingHeightLoading="buildingHeightLoading"
+        :buildingHeightError="buildingHeightError"
     />
     <FiveGMap
         v-model:selected="selected"
         v-model:showRoads="showRoads"
         v-model:showBuildings="showBuildings"
+        v-model:showBuildingHeights="showBuildingHeights"
         :zoneSideKm="zoneSideKm"
         :roads="roadsData"
         :buildings="buildingsData"
@@ -29,13 +33,17 @@ import {
   fetchRoadSpeedsInSquare,
   computeSpeedStats,
   fetchBuildingsInSquare,
-  computeBuildingStats
+  computeBuildingStats,
+  fetchBuildingHeightsInSquare,
+  computeHeightStats,
+  applyBuildingHeights
 } from "@/utils/overpassSpeed"
 
 const zoneSideKm = ref(1.0)
 const selected = ref(null)
 const showRoads = ref(true)
 const showBuildings = ref(true)
+const showBuildingHeights = ref(true)
 
 const speedStats = ref(null)
 const roadsData = ref([])
@@ -46,6 +54,9 @@ const buildingStats = ref(null)
 const buildingsData = ref([])
 const buildingLoading = ref(false)
 const buildingError = ref(null)
+const buildingHeightStats = ref(null)
+const buildingHeightLoading = ref(false)
+const buildingHeightError = ref(null)
 
 let aborter = null
 let debounceTimer = null
@@ -60,6 +71,9 @@ function scheduleSpeedRefresh() {
     buildingsData.value = []
     buildingError.value = null
     buildingLoading.value = false
+    buildingHeightStats.value = null
+    buildingHeightError.value = null
+    buildingHeightLoading.value = false
     return
   }
 
@@ -72,9 +86,11 @@ function scheduleSpeedRefresh() {
     speedError.value = null
     buildingLoading.value = true
     buildingError.value = null
+    buildingHeightLoading.value = true
+    buildingHeightError.value = null
 
     try {
-      const [roadsRes, buildingsRes] = await Promise.allSettled([
+      const [roadsRes, buildingsRes, heightRes] = await Promise.allSettled([
         fetchRoadSpeedsInSquare(
             selected.value.lat,
             selected.value.lng,
@@ -82,6 +98,12 @@ function scheduleSpeedRefresh() {
             aborter.signal
         ),
         fetchBuildingsInSquare(
+            selected.value.lat,
+            selected.value.lng,
+            zoneSideKm.value,
+            aborter.signal
+        ),
+        fetchBuildingHeightsInSquare(
             selected.value.lat,
             selected.value.lng,
             zoneSideKm.value,
@@ -101,15 +123,30 @@ function scheduleSpeedRefresh() {
         }
       }
 
+      let buildings = []
       if (buildingsRes.status === "fulfilled") {
-        const {areas, buildings} = buildingsRes.value
+        const {areas, buildings: rawBuildings} = buildingsRes.value
         buildingStats.value = computeBuildingStats(areas)
-        buildingsData.value = buildings
+        buildings = rawBuildings
+        buildingsData.value = rawBuildings
       } else {
         if (buildingsRes.reason?.name !== "AbortError") {
           buildingError.value = buildingsRes.reason?.message || "Failed to fetch buildings"
           buildingStats.value = null
           buildingsData.value = []
+        }
+      }
+
+      if (heightRes.status === "fulfilled") {
+        const {items, heights} = heightRes.value
+        const merged = applyBuildingHeights(buildings, items)
+        buildingsData.value = merged
+        const heightValues = merged.map(b => b.height).filter(n => Number.isFinite(n))
+        buildingHeightStats.value = heightValues.length ? computeHeightStats(heightValues) : computeHeightStats(heights)
+      } else {
+        if (heightRes.reason?.name !== "AbortError") {
+          buildingHeightError.value = heightRes.reason?.message || "Failed to fetch building heights"
+          buildingHeightStats.value = null
         }
       }
     } catch (e) {
@@ -120,10 +157,13 @@ function scheduleSpeedRefresh() {
         buildingError.value = e?.message || "Failed to fetch buildings"
         buildingStats.value = null
         buildingsData.value = []
+        buildingHeightError.value = e?.message || "Failed to fetch building heights"
+        buildingHeightStats.value = null
       }
     } finally {
       speedLoading.value = false
       buildingLoading.value = false
+      buildingHeightLoading.value = false
     }
   }, 350)
 }
