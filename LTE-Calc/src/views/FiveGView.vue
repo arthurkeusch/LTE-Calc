@@ -12,6 +12,7 @@
         :buildingHeightStats="buildingHeightStats"
         :buildingHeightLoading="buildingHeightLoading"
         :buildingHeightError="buildingHeightError"
+        :densityStats="densityStats"
         :anyLoading="anyLoading"
         :loadingProgress="loadingProgress"
     />
@@ -20,9 +21,11 @@
         v-model:showRoads="showRoads"
         v-model:showBuildings="showBuildings"
         v-model:showBuildingHeights="showBuildingHeights"
+        v-model:showDensityGrid="showDensityGrid"
         :zoneSideKm="zoneSideKm"
         :roads="roadsData"
         :buildings="buildingsData"
+        :densityGrid="densityGrid"
     />
   </div>
 </template>
@@ -38,6 +41,7 @@ import {
   loadBuildingHeightsFromCache,
   saveBuildingHeightsToCache,
   computeBuildingStats,
+  computeDensityStats,
   computeHeightStats,
   applyAltimetryHeights
 } from "@/utils/overpassSpeed"
@@ -47,6 +51,7 @@ const selected = ref(null)
 const showRoads = ref(true)
 const showBuildings = ref(true)
 const showBuildingHeights = ref(true)
+const showDensityGrid = ref(false)
 
 const speedStats = ref(null)
 const roadsData = ref([])
@@ -60,6 +65,8 @@ const buildingError = ref(null)
 const buildingHeightStats = ref(null)
 const buildingHeightLoading = ref(false)
 const buildingHeightError = ref(null)
+const densityStats = ref(null)
+const densityGrid = ref([])
 const speedProgress = ref(0)
 const buildingProgress = ref(0)
 const heightProgress = ref(0)
@@ -72,6 +79,125 @@ const loadingProgress = computed(() => {
 
 let aborter = null
 let debounceTimer = null
+
+function computeDensityFromBuildings(buildings, center, sideKm) {
+  if (!center || !Array.isArray(buildings) || buildings.length === 0) return null
+  const sideMeters = Number(sideKm) * 1000
+  if (!Number.isFinite(sideMeters) || sideMeters <= 0) return null
+  const cellSize = 100
+  const cellsPerSide = Math.max(1, Math.ceil(sideMeters / cellSize))
+  const totalCells = cellsPerSide * cellsPerSide
+  const sums = new Array(totalCells).fill(0)
+  const counts = new Array(totalCells).fill(0)
+  const half = sideMeters / 2
+  const lat0 = center.lat
+  const toRad = Math.PI / 180
+  const R = 6378137
+  const cosLat = Math.cos(lat0 * toRad)
+
+  for (const b of buildings) {
+    if (!Number.isFinite(b?.area) || !Array.isArray(b?.geometry) || b.geometry.length === 0) continue
+    const c = centroidLatLng(b.geometry)
+    if (!c) continue
+    const dx = (c.lng - center.lng) * toRad * cosLat * R
+    const dy = (c.lat - center.lat) * toRad * R
+    const ix = Math.floor((dx + half) / cellSize)
+    const iy = Math.floor((dy + half) / cellSize)
+    if (ix < 0 || iy < 0 || ix >= cellsPerSide || iy >= cellsPerSide) continue
+    const idx = iy * cellsPerSide + ix
+    sums[idx] += b.area
+    counts[idx] += 1
+  }
+
+  const cellArea = cellSize * cellSize
+  const coverages = sums.map(a => Math.max(0, Math.min(1, a / cellArea)))
+  const maxCount = Math.max(1, ...counts)
+  const scores = coverages.map((c, i) => {
+    const countNorm = counts[i] / maxCount
+    const countBoost = Math.sqrt(Math.max(0, countNorm))
+    return Math.max(0, Math.min(1, c * 0.8 + countBoost * 0.2))
+  })
+  return computeDensityStats(scores)
+}
+
+function computeDensityGrid(buildings, center, sideKm) {
+  if (!center || !Array.isArray(buildings) || buildings.length === 0) {
+    return {cells: [], stats: null}
+  }
+  const sideMeters = Number(sideKm) * 1000
+  if (!Number.isFinite(sideMeters) || sideMeters <= 0) {
+    return {cells: [], stats: null}
+  }
+  const cellSize = 100
+  const cellsPerSide = Math.max(1, Math.ceil(sideMeters / cellSize))
+  const totalCells = cellsPerSide * cellsPerSide
+  const sums = new Array(totalCells).fill(0)
+  const counts = new Array(totalCells).fill(0)
+  const half = sideMeters / 2
+  const lat0 = center.lat
+  const toRad = Math.PI / 180
+  const R = 6378137
+  const cosLat = Math.cos(lat0 * toRad)
+
+  for (const b of buildings) {
+    if (!Number.isFinite(b?.area) || !Array.isArray(b?.geometry) || b.geometry.length === 0) continue
+    const c = centroidLatLng(b.geometry)
+    if (!c) continue
+    const dx = (c.lng - center.lng) * toRad * cosLat * R
+    const dy = (c.lat - center.lat) * toRad * R
+    const ix = Math.floor((dx + half) / cellSize)
+    const iy = Math.floor((dy + half) / cellSize)
+    if (ix < 0 || iy < 0 || ix >= cellsPerSide || iy >= cellsPerSide) continue
+    const idx = iy * cellsPerSide + ix
+    sums[idx] += b.area
+    counts[idx] += 1
+  }
+
+  const cellArea = cellSize * cellSize
+  const coverages = sums.map(a => Math.max(0, Math.min(1, a / cellArea)))
+  const maxCount = Math.max(1, ...counts)
+  const scores = coverages.map((c, i) => {
+    const countNorm = counts[i] / maxCount
+    const countBoost = Math.sqrt(Math.max(0, countNorm))
+    return Math.max(0, Math.min(1, c * 0.4 + countBoost * 0.6))
+  })
+  const stats = computeDensityStats(scores)
+  const dLatPerM = (1 / R) * (180 / Math.PI)
+  const dLngPerM = dLatPerM / cosLat
+  const cells = []
+  for (let iy = 0; iy < cellsPerSide; iy++) {
+    for (let ix = 0; ix < cellsPerSide; ix++) {
+      const dx0 = -half + ix * cellSize
+      const dy0 = -half + iy * cellSize
+      const dx1 = dx0 + cellSize
+      const dy1 = dy0 + cellSize
+      const south = center.lat + dy0 * dLatPerM
+      const north = center.lat + dy1 * dLatPerM
+      const west = center.lng + dx0 * dLngPerM
+      const east = center.lng + dx1 * dLngPerM
+      const idx = iy * cellsPerSide + ix
+      cells.push({
+        score: scores[idx],
+        coverage: coverages[idx],
+        count: counts[idx],
+        bounds: [[south, west], [north, east]]
+      })
+    }
+  }
+  return {cells, stats}
+}
+
+function centroidLatLng(geometry) {
+  const pts = Array.isArray(geometry) ? geometry : []
+  if (!pts.length) return null
+  let sumLat = 0
+  let sumLng = 0
+  for (const p of pts) {
+    sumLat += p[0]
+    sumLng += p[1]
+  }
+  return {lat: sumLat / pts.length, lng: sumLng / pts.length}
+}
 
 function scheduleSpeedRefresh() {
   if (!selected.value) {
@@ -239,6 +365,17 @@ function scheduleSpeedRefresh() {
 }
 
 watch([selected, zoneSideKm], scheduleSpeedRefresh, {deep: true})
+
+watch([buildingsData, selected, zoneSideKm], () => {
+  if (!selected.value) {
+    densityStats.value = null
+    densityGrid.value = []
+    return
+  }
+  const grid = computeDensityGrid(buildingsData.value, selected.value, zoneSideKm.value)
+  densityStats.value = grid.stats
+  densityGrid.value = grid.cells
+}, {deep: true})
 </script>
 
 <style scoped>

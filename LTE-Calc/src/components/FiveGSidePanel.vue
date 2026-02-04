@@ -253,6 +253,74 @@
             </div>
           </div>
         </div>
+
+        <div class="divider"></div>
+
+        <div class="section">
+          <div class="sTitle">Sub-zone density (coverage + count)</div>
+
+          <div v-if="!selected" class="muted">
+            Select a point to compute density.
+          </div>
+
+          <div v-else>
+            <div v-if="!densityStats || densityStats.count === 0" class="muted">
+              <span v-if="buildingLoading">Loading density...</span>
+              <span v-else>No density data found in this area.</span>
+            </div>
+            <div v-else class="speedCard">
+              <div class="speedTop">
+                <div class="speedMetric">
+                  <div class="mLabel">Average score</div>
+                  <div class="mValue">{{ (densityStats.avg * 100).toFixed(1) }}%</div>
+                </div>
+                <div class="speedMeta">
+                  <div class="mSmall">{{ densityStats.count }} cells</div>
+                  <div class="mSmall">min {{ (densityStats.min * 100).toFixed(1) }} / max {{ (densityStats.max * 100).toFixed(1) }}</div>
+                </div>
+              </div>
+
+              <div class="chartWrap">
+                <svg class="chart" viewBox="0 0 260 130" preserveAspectRatio="none">
+                  <g>
+                    <line :x1="padL" :y1="plotBottom" :x2="plotRight" :y2="plotBottom" class="axis" />
+                    <line :x1="padL" :y1="plotTop" :x2="padL" :y2="plotBottom" class="axis" />
+
+                    <g v-for="t in dXTicks" :key="'dx'+t.value">
+                      <line :x1="t.x" :y1="plotBottom" :x2="t.x" :y2="plotBottom + 4" class="tickLine" />
+                      <text :x="t.x" :y="plotBottom + 14" text-anchor="middle" class="tickText">{{ t.value }}</text>
+                    </g>
+
+                    <g v-for="t in dYTicks" :key="'dy'+t.value">
+                      <line :x1="padL - 4" :y1="t.y" :x2="padL" :y2="t.y" class="tickLine" />
+                      <text :x="padL - 6" :y="t.y + 3" text-anchor="end" class="tickText">{{ t.value }}</text>
+                      <line :x1="padL" :y1="t.y" :x2="plotRight" :y2="t.y" class="gridLine" />
+                    </g>
+                  </g>
+
+                  <line
+                      :x1="dXFromDensity(densityStats.avg)"
+                      :y1="plotTop"
+                      :x2="dXFromDensity(densityStats.avg)"
+                      :y2="plotBottom"
+                      class="avgLine"
+                  />
+
+                  <g v-for="(b, i) in dHist5" :key="'db'+i">
+                    <rect
+                        :x="barX5(i)"
+                        :y="plotBottom - dBarH5(b)"
+                        :width="barW5"
+                        :height="dBarH5(b)"
+                        class="bar"
+                        rx="4"
+                    />
+                  </g>
+                </svg>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
 
       <div class="foot">
@@ -286,6 +354,7 @@ const props = defineProps({
   buildingHeightStats: { type: Object, default: null },
   buildingHeightLoading: { type: Boolean, default: false },
   buildingHeightError: { type: String, default: null },
+  densityStats: { type: Object, default: null },
   anyLoading: { type: Boolean, default: false },
   loadingProgress: { type: Number, default: 0 }
 })
@@ -473,6 +542,60 @@ const hXTicks = computed(() => {
 
 const hYTicks = computed(() => {
   const maxY = hMaxHist5.value
+  const n = 4
+  const step = Math.max(1, Math.round(maxY / n))
+  const vals = []
+  for (let v = 0; v <= maxY; v += step) vals.push(v)
+  if (vals[vals.length - 1] !== maxY) vals.push(maxY)
+  return vals.map(v => ({
+    value: v,
+    y: plotBottom - (v / maxY) * (plotBottom - plotTop)
+  }))
+})
+
+function dXFromDensity(value) {
+  if (!props.densityStats) return plotLeft
+  const min = props.densityStats.min
+  const max = props.densityStats.max
+  if (max <= min) return plotLeft
+  const t = (value - min) / (max - min)
+  const x = plotLeft + t * (plotRight - plotLeft)
+  return Math.min(plotRight, Math.max(plotLeft, x))
+}
+
+const dHist5 = computed(() => {
+  const h = props.densityStats?.hist10
+  if (!Array.isArray(h) || h.length !== 10) return [0, 0, 0, 0, 0]
+  return [
+    h[0] + h[1],
+    h[2] + h[3],
+    h[4] + h[5],
+    h[6] + h[7],
+    h[8] + h[9]
+  ]
+})
+
+const dMaxHist5 = computed(() => Math.max(1, ...dHist5.value))
+
+function dBarH5(v) {
+  const h = (v / dMaxHist5.value) * (plotBottom - plotTop)
+  return Math.max(1, Math.min(plotBottom - plotTop, h))
+}
+
+const dXTicks = computed(() => {
+  if (!props.densityStats) return []
+  const min = props.densityStats.min
+  const max = props.densityStats.max
+  if (max <= min) return [{ value: min, x: plotLeft }, { value: max, x: plotRight }]
+  const n = 5
+  const step = (max - min) / n
+  const vals = []
+  for (let i = 0; i <= n; i++) vals.push(min + i * step)
+  return vals.map(v => ({ value: Math.round(v * 100), x: dXFromDensity(v) }))
+})
+
+const dYTicks = computed(() => {
+  const maxY = dMaxHist5.value
   const n = 4
   const step = Math.max(1, Math.round(maxY / n))
   const vals = []

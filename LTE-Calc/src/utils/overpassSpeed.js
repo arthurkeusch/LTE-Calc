@@ -364,6 +364,45 @@ export function computeHeightStats(values) {
     }
 }
 
+export function computeDensityStats(values) {
+    const v = (values || []).filter(n => Number.isFinite(n)).slice().sort((a, b) => a - b)
+    const count = v.length
+    if (count === 0) {
+        return {
+            count: 0,
+            min: 0,
+            max: 0,
+            avg: 0,
+            deciles: [],
+            hist10: []
+        }
+    }
+
+    const min = v[0]
+    const max = v[count - 1]
+    const avg = v.reduce((s, x) => s + x, 0) / count
+
+    const bins = 10
+    const hist10 = new Array(bins).fill(0)
+    const span = max - min || 1
+    const step = span / bins
+    for (const x of v) {
+        let idx = Math.floor((x - min) / step)
+        if (idx < 0) idx = 0
+        if (idx >= bins) idx = bins - 1
+        hist10[idx]++
+    }
+
+    return {
+        count,
+        min,
+        max,
+        avg,
+        deciles: [],
+        hist10
+    }
+}
+
 export async function applyAltimetryHeights(buildings, signal, onProgress) {
     if (!Array.isArray(buildings) || buildings.length === 0) return buildings || []
     const missingIdx = []

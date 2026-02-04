@@ -55,6 +55,25 @@
           <span>{{ Math.round(heightRange.max) }} m</span>
         </div>
       </div>
+      <div class="legendDivider"></div>
+      <div class="legendTitle">Density grid</div>
+      <label class="legendToggle">
+        <input
+            class="legendCheckbox"
+            type="checkbox"
+            :checked="showDensityGrid"
+            :disabled="!canToggleDensityGrid"
+            @change="$emit('update:showDensityGrid', $event.target.checked)"
+        />
+        <span>Show 100m grid</span>
+      </label>
+      <div v-if="showDensityGrid && densityRange" class="legendScale">
+        <div class="legendBar legendBarDensity"></div>
+        <div class="legendRange">
+          <span>{{ Math.round(densityRange.min * 100) }}%</span>
+          <span>{{ Math.round(densityRange.max * 100) }}%</span>
+        </div>
+      </div>
     </div>
   </section>
 </template>
@@ -92,18 +111,32 @@ const props = defineProps({
   showBuildings: {
     type: Boolean,
     default: true
+  },
+  showDensityGrid: {
+    type: Boolean,
+    default: false
+  },
+  densityGrid: {
+    type: Array,
+    default: () => []
   }
 })
 
-const emit = defineEmits(['update:selected', 'update:showRoads', 'update:showBuildings', 'update:showBuildingHeights'])
+const emit = defineEmits(['update:selected', 'update:showRoads', 'update:showBuildings', 'update:showBuildingHeights', 'update:showDensityGrid'])
 
 const mapEl = ref(null)
 const zoneHalfSideM = computed(() => (Number(props.zoneSideKm) * 1000) / 2)
-const {showRoads, roads, showBuildings, buildings, showBuildingHeights} = toRefs(props)
+const {showRoads, roads, showBuildings, buildings, showBuildingHeights, showDensityGrid, densityGrid} = toRefs(props)
 const canToggleRoads = computed(() => roads.value.length > 0)
 const canToggleBuildings = computed(() => buildings.value.length > 0)
+const canToggleDensityGrid = computed(() => densityGrid.value.length > 0)
 const heightRange = computed(() => {
   const vals = (buildings.value || []).map(b => b.height).filter(n => Number.isFinite(n))
+  if (!vals.length) return null
+  return {min: Math.min(...vals), max: Math.max(...vals)}
+})
+const densityRange = computed(() => {
+  const vals = (densityGrid.value || []).map(c => c.score).filter(n => Number.isFinite(n))
   if (!vals.length) return null
   return {min: Math.min(...vals), max: Math.max(...vals)}
 })
@@ -114,6 +147,7 @@ let centerDot = null
 let square = null
 let roadLayers = L.layerGroup()
 let buildingLayers = L.layerGroup()
+let densityGridLayers = L.layerGroup()
 
 function boundsFromCenter(lat, lng, halfSideM) {
   const latRad = (lat * Math.PI) / 180
@@ -204,6 +238,31 @@ function updateLayers(fit = true) {
     })
   }
 
+  densityGridLayers.clearLayers()
+  if (props.showDensityGrid && props.densityGrid.length) {
+    const range = densityRange.value
+    const minD = range ? range.min : 0
+    const maxD = range ? range.max : 1
+    props.densityGrid.forEach(cell => {
+      const color = densityToColor(cell.score, minD, maxD)
+      const rect = L.rectangle(cell.bounds, {
+        color,
+        weight: 1,
+        opacity: 0.65,
+        fillColor: color,
+        fillOpacity: 0.4
+      }).addTo(densityGridLayers)
+      const covPct = Number.isFinite(cell.coverage) ? (cell.coverage * 100).toFixed(1) : "0.0"
+      const scorePct = Number.isFinite(cell.score) ? (cell.score * 100).toFixed(1) : "0.0"
+      const count = Number.isFinite(cell.count) ? cell.count : 0
+      rect.bindTooltip(`Score: ${scorePct}%<br/>Coverage: ${covPct}%<br/>Buildings: ${count}`, {
+        direction: "top",
+        sticky: true,
+        opacity: 0.9
+      })
+    })
+  }
+
   if (fit) map.fitBounds(b, {padding: [18, 18], animate: true})
 }
 
@@ -231,6 +290,15 @@ function heightToColor(height, min, max) {
   return `hsl(${hue}, 90%, 55%)`
 }
 
+function densityToColor(density, min, max) {
+  if (!Number.isFinite(density) || !Number.isFinite(min) || !Number.isFinite(max) || max <= min) {
+    return "rgba(120, 200, 255, 0.25)"
+  }
+  const t = Math.max(0, Math.min(1, (density - min) / (max - min)))
+  const hue = (1 - t) * 220
+  return `hsla(${hue}, 90%, 55%, 0.45)`
+}
+
 function onMapClick(e) {
   emit('update:selected', {lat: e.latlng.lat, lng: e.latlng.lng})
 }
@@ -248,6 +316,7 @@ onMounted(() => {
 
   roadLayers.addTo(map)
   buildingLayers.addTo(map)
+  densityGridLayers.addTo(map)
 
   map.on("click", onMapClick)
 
@@ -292,6 +361,14 @@ watch(() => props.showBuildings, () => {
 })
 
 watch(() => props.showBuildingHeights, () => {
+  updateLayers(false)
+})
+
+watch(() => props.densityGrid, () => {
+  updateLayers(false)
+}, {deep: true})
+
+watch(() => props.showDensityGrid, () => {
   updateLayers(false)
 })
 </script>
@@ -359,6 +436,10 @@ watch(() => props.showBuildingHeights, () => {
 
 .legendBarHeights {
   background: linear-gradient(90deg, hsl(220, 90%, 55%), hsl(0, 90%, 55%));
+}
+
+.legendBarDensity {
+  background: linear-gradient(90deg, hsla(220, 90%, 55%, 0.4), hsla(0, 90%, 55%, 0.8));
 }
 
 .legendRange {
