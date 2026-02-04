@@ -165,12 +165,17 @@ function updateLayers(fit = true) {
   roadLayers.clearLayers()
   if (props.showRoads) {
     props.roads.forEach(road => {
-      L.polyline(road.geometry, {
+      const line = L.polyline(road.geometry, {
         color: getSpeedColor(road.speed),
         weight: 5,
         opacity: 0.7,
         lineJoin: 'round'
       }).addTo(roadLayers)
+      line.bindTooltip(`Speed: ${formatSpeed(road.speed)} km/h`, {
+        direction: "top",
+        sticky: true,
+        opacity: 0.9
+      })
     })
   }
 
@@ -181,17 +186,40 @@ function updateLayers(fit = true) {
       const color = props.showBuildingHeights && range
           ? heightToColor(building.height, range.min, range.max)
           : "#F5C542"
-      L.polygon(building.geometry, {
+      const poly = L.polygon(building.geometry, {
         color,
         weight: 1,
         opacity: 0.8,
         fillColor: color,
         fillOpacity: 0.35
       }).addTo(buildingLayers)
+      poly.bindTooltip(
+          `Area: ${formatArea(building.area)} m²<br/>Height: ${formatHeight(building.height)} m`,
+          {
+            direction: "top",
+            sticky: true,
+            opacity: 0.9
+          }
+      )
     })
   }
 
   if (fit) map.fitBounds(b, {padding: [18, 18], animate: true})
+}
+
+function formatArea(value) {
+  if (!Number.isFinite(value)) return "—"
+  return Math.round(value).toString()
+}
+
+function formatHeight(value) {
+  if (!Number.isFinite(value)) return "—"
+  return value.toFixed(1)
+}
+
+function formatSpeed(value) {
+  if (!Number.isFinite(value)) return "—"
+  return value.toFixed(0)
 }
 
 function heightToColor(height, min, max) {

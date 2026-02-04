@@ -48,10 +48,10 @@
           </div>
 
           <div v-else>
-            <div v-if="speedLoading" class="muted">Loading speeds…</div>
-            <div v-else-if="speedError" class="error">{{ speedError }}</div>
+            <div v-if="speedError" class="error">{{ speedError }}</div>
             <div v-else-if="!speedStats || speedStats.count === 0" class="muted">
-              No road speed data found in this area.
+              <span v-if="speedLoading">Loading speeds…</span>
+              <span v-else>No road speed data found in this area.</span>
             </div>
             <div v-else class="speedCard">
               <div class="speedTop">
@@ -66,6 +66,9 @@
               </div>
 
               <div class="chartWrap">
+                <div v-if="speedLoading" class="chartSpinner">
+                  <div class="spinner"></div>
+                </div>
                 <svg class="chart" viewBox="0 0 260 130" preserveAspectRatio="none">
                   <g>
                     <line :x1="padL" :y1="plotBottom" :x2="plotRight" :y2="plotBottom" class="axis" />
@@ -117,10 +120,10 @@
           </div>
 
           <div v-else>
-            <div v-if="buildingLoading" class="muted">Loading buildings...</div>
-            <div v-else-if="buildingError" class="error">{{ buildingError }}</div>
+            <div v-if="buildingError" class="error">{{ buildingError }}</div>
             <div v-else-if="!buildingStats || buildingStats.count === 0" class="muted">
-              No building data found in this area.
+              <span v-if="buildingLoading">Loading buildings...</span>
+              <span v-else>No building data found in this area.</span>
             </div>
             <div v-else class="speedCard">
               <div class="speedTop">
@@ -135,6 +138,9 @@
               </div>
 
               <div class="chartWrap">
+                <div v-if="buildingLoading" class="chartSpinner">
+                  <div class="spinner"></div>
+                </div>
                 <svg class="chart" viewBox="0 0 260 130" preserveAspectRatio="none">
                   <g>
                     <line :x1="padL" :y1="plotBottom" :x2="plotRight" :y2="plotBottom" class="axis" />
@@ -186,10 +192,10 @@
           </div>
 
           <div v-else>
-            <div v-if="buildingHeightLoading" class="muted">Loading heights...</div>
-            <div v-else-if="buildingHeightError" class="error">{{ buildingHeightError }}</div>
+            <div v-if="buildingHeightError" class="error">{{ buildingHeightError }}</div>
             <div v-else-if="!buildingHeightStats || buildingHeightStats.count === 0" class="muted">
-              No building height data found in this area.
+              <span v-if="buildingHeightLoading">Loading heights...</span>
+              <span v-else>No building height data found in this area.</span>
             </div>
             <div v-else class="speedCard">
               <div class="speedTop">
@@ -204,6 +210,9 @@
               </div>
 
               <div class="chartWrap">
+                <div v-if="buildingHeightLoading" class="chartSpinner">
+                  <div class="spinner"></div>
+                </div>
                 <svg class="chart" viewBox="0 0 260 130" preserveAspectRatio="none">
                   <g>
                     <line :x1="padL" :y1="plotBottom" :x2="plotRight" :y2="plotBottom" class="axis" />
@@ -247,7 +256,14 @@
       </div>
 
       <div class="foot">
-        <div class="tip">
+        <div v-if="anyLoading" class="progressCard">
+          <div class="progressLabel">Loading data…</div>
+          <div class="progressBar">
+            <div class="progressFill" :style="{ width: progressPct + '%' }"></div>
+          </div>
+          <div class="progressPct">{{ progressPct }}%</div>
+        </div>
+        <div v-else class="tip">
           Click anywhere on the map to place the center marker and draw the square.
         </div>
       </div>
@@ -269,7 +285,9 @@ const props = defineProps({
   buildingError: { type: String, default: null },
   buildingHeightStats: { type: Object, default: null },
   buildingHeightLoading: { type: Boolean, default: false },
-  buildingHeightError: { type: String, default: null }
+  buildingHeightError: { type: String, default: null },
+  anyLoading: { type: Boolean, default: false },
+  loadingProgress: { type: Number, default: 0 }
 })
 
 defineEmits(["update:zoneSideKm"])
@@ -283,6 +301,8 @@ const plotLeft = padL
 const plotRight = 260 - padR
 const plotTop = padT
 const plotBottom = 130 - padB
+
+const progressPct = computed(() => Math.round((props.loadingProgress || 0) * 100))
 
 function xFromSpeed(value) {
   if (!props.speedStats) return plotLeft
@@ -654,6 +674,26 @@ const quintileEdges = computed(() => {
   padding: 8px;
 }
 
+.chartSpinner {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.18);
+  pointer-events: none;
+}
+
+.spinner {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.25);
+  border-top-color: rgba(255, 255, 255, 0.95);
+  animation: spin 0.9s linear infinite;
+}
+
 .chart {
   width: 100%;
   height: 130px;
@@ -710,6 +750,48 @@ const quintileEdges = computed(() => {
   background: rgba(255, 255, 255, 0.03);
   font-size: 12px;
   opacity: 0.75;
+}
+
+.progressCard {
+  padding: 10px 12px;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.03);
+  display: grid;
+  gap: 6px;
+}
+
+.progressLabel {
+  font-size: 11px;
+  font-weight: 900;
+  opacity: 0.75;
+}
+
+.progressBar {
+  height: 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+
+.progressFill {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, rgba(88, 101, 242, 0.85), rgba(245, 197, 66, 0.9));
+  transition: width 0.2s ease;
+}
+
+.progressPct {
+  font-size: 11px;
+  opacity: 0.7;
+  text-align: right;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 @media (max-width: 900px) {

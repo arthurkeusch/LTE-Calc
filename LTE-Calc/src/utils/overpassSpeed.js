@@ -64,17 +64,12 @@ out tags geom;`
     for (const el of els) {
         if (el.type !== "way") continue
         if (!el.geometry || el.geometry.length < 3) continue
-        const tags = el?.tags || {}
         const geometry = el.geometry.map(p => [p.lat, p.lon])
         const area = polygonAreaMeters2(geometry)
         if (Number.isFinite(area) && area > 0) {
-            const height = heightFromOsmTags(tags)
-            const levels = levelsFromOsmTags(tags)
             buildings.push({
                 id: el.id,
                 area,
-                height,
-                levels,
                 geometry
             })
             areas.push(area)
@@ -88,9 +83,10 @@ const OVERPASS_PRIMARY = "https://overpass-api.de/api/interpreter"
 const OVERPASS_RETRIES = 3
 const OVERPASS_RETRY_DELAY_MS = 500
 
-const BDNB_URL_TEMPLATE =
-    "https://api.bdnb.io/v1/bdnb/donnees/batiment_groupe_complet/bbox"
-const BDNB_HEIGHT_FIELD = "hauteur_mean"
+const ALTI_ENDPOINT = "https://data.geopf.fr/altimetrie/1.0/calcul/alti/rest/elevation.json"
+const ALTI_RESOURCE_ID = "ign_lidar_hd_mnx_multi_wld"
+const ALTI_BATCH_SIZE = 50
+const ALTI_MAX_CONCURRENCY = 5
 
 async function fetchOverpassJson(query, signal) {
     let lastError = null
@@ -123,55 +119,6 @@ async function fetchOverpassJson(query, signal) {
     }
 
     throw lastError || new Error("Failed to fetch Overpass data")
-}
-
-export async function fetchBuildingHeightsInSquare(lat, lng, sideKm, signal) {
-    if (!BDNB_URL_TEMPLATE) {
-        throw new Error("BDNB URL template not configured")
-    }
-
-    const halfSideM = (Number(sideKm) * 1000) / 2
-    const latRad = (lat * Math.PI) / 180
-    const dLat = (halfSideM / 6378137) * (180 / Math.PI)
-    const dLng = dLat / Math.cos(latRad)
-    const south = lat - dLat
-    const north = lat + dLat
-    const west = lng - dLng
-    const east = lng + dLng
-    const baseUrl = BDNB_URL_TEMPLATE
-        .replaceAll("{south}", south)
-        .replaceAll("{west}", west)
-        .replaceAll("{north}", north)
-        .replaceAll("{east}", east)
-
-    const [w2154, s2154] = wgs84ToLambert93(west, south)
-    const [e2154, n2154] = wgs84ToLambert93(east, north)
-
-    const params = new URLSearchParams({
-        xmin: String(w2154),
-        ymin: String(s2154),
-        xmax: String(e2154),
-        ymax: String(n2154),
-        srid: "2154",
-        limit: "10000"
-    })
-    const sep = baseUrl.includes("?") ? "&" : "?"
-    const url = `${baseUrl}${sep}${params.toString()}`
-
-    const res = await fetch(url, {
-        headers: {
-            Accept: "application/json"
-        },
-        signal
-    })
-    if (!res.ok) {
-        const t = await res.text().catch(() => "")
-        throw new Error(`BDNB error (${res.status}) ${t ? "- " + t.slice(0, 140) : ""}`.trim())
-    }
-    const json = await res.json()
-    const items = normalizeBdnbItems(json)
-    const heights = items.map(i => i.height).filter(n => Number.isFinite(n))
-    return {items, heights}
 }
 
 function delay(ms, signal) {
@@ -214,22 +161,6 @@ function speedFromTags(tags, highway) {
     return 30
 }
 
-function heightFromOsmTags(tags) {
-    if (!tags) return null
-    const h = tags.height || tags["building:height"]
-    if (!h) return null
-    const n = parseNumberFromString(h)
-    return Number.isFinite(n) ? n : null
-}
-
-function levelsFromOsmTags(tags) {
-    if (!tags) return null
-    const l = tags["building:levels"]
-    if (!l) return null
-    const n = parseNumberFromString(l)
-    return Number.isFinite(n) ? n : null
-}
-
 function parseMaxspeed(v) {
     if (!v) return null
     if (typeof v !== "string") return null
@@ -241,18 +172,6 @@ function parseMaxspeed(v) {
     if (!Number.isFinite(n)) return null
 
     if (s.includes("mph")) return n * 1.60934
-    return n
-}
-
-function parseNumberFromString(v) {
-    if (v === null || v === undefined) return null
-    if (typeof v === "number") return Number.isFinite(v) ? v : null
-    if (typeof v !== "string") return null
-    const s = v.trim().toLowerCase()
-    const m = s.match(/(\d+(\.\d+)?)/)
-    if (!m) return null
-    const n = Number(m[1])
-    if (!Number.isFinite(n)) return null
     return n
 }
 
@@ -385,48 +304,44 @@ export function computeHeightStats(values) {
     }
 }
 
-export function applyBuildingHeights(buildings, heightItems, options = {}) {
-    const maxDistanceM = Number.isFinite(options.maxDistanceM) ? options.maxDistanceM : 60
-    const levelHeightM = Number.isFinite(options.levelHeightM) ? options.levelHeightM : 3
-    const items = (heightItems || []).filter(i => Number.isFinite(i.height))
-    if (!Array.isArray(buildings) || buildings.length === 0 || items.length === 0) {
-        return (buildings || []).map(b => {
-            if (Number.isFinite(b.height)) return {...b}
-            if (Number.isFinite(b.levels)) return {...b, height: b.levels * levelHeightM}
-            return {...b, height: null}
-        })
+export async function applyAltimetryHeights(buildings, signal, onProgress) {
+    if (!Array.isArray(buildings) || buildings.length === 0) return buildings || []
+    const missingIdx = []
+    const points = []
+    for (let i = 0; i < buildings.length; i++) {
+        const b = buildings[i]
+        if (Number.isFinite(b.height)) continue
+        const c = centroidLatLng(b.geometry)
+        if (!c) continue
+        missingIdx.push(i)
+        points.push(c)
     }
 
-    const polyItems = items.filter(i => Array.isArray(i.polygons) && i.polygons.length)
-    const pointItems = items
-        .filter(i => Number.isFinite(i.lat) && Number.isFinite(i.lng))
-        .map(i => ({lat: i.lat, lng: i.lng, height: i.height}))
+    if (!points.length) return buildings
 
-    const grid = buildSpatialGrid(pointItems, maxDistanceM)
-
-    return buildings.map(b => {
-        const centroid = centroidLatLng(b.geometry)
-        let height = null
-
-        if (centroid && polyItems.length) {
-            for (const item of polyItems) {
-                if (pointInPolygons(centroid, item.polygons)) {
-                    height = item.height
-                    break
-                }
+    const next = buildings.slice()
+    const heights = await fetchAltimetryHeights(points, signal, (offset, batchHeights, completed, total) => {
+        for (let i = 0; i < batchHeights.length; i++) {
+            const idx = missingIdx[offset + i]
+            const h = batchHeights[i]
+            if (Number.isFinite(h) && h > 0) {
+                next[idx] = {...next[idx], height: h}
             }
         }
-
-        if (height === null && centroid && pointItems.length) {
-            height = nearestHeight(centroid, grid, maxDistanceM)
+        if (typeof onProgress === "function") {
+            const progress = total ? completed / total : 1
+            onProgress(next.slice(), progress)
         }
-
-        if (height === null) {
-            if (Number.isFinite(b.height)) height = b.height
-            else if (Number.isFinite(b.levels)) height = b.levels * levelHeightM
-        }
-        return {...b, height}
     })
+
+    for (let i = 0; i < heights.length; i++) {
+        const idx = missingIdx[i]
+        const h = heights[i]
+        if (Number.isFinite(h) && h > 0) {
+            next[idx] = {...next[idx], height: h}
+        }
+    }
+    return next
 }
 
 function percentileSorted(arr, p) {
@@ -438,6 +353,87 @@ function percentileSorted(arr, p) {
     if (lo === hi) return arr[lo]
     const w = x - lo
     return arr[lo] * (1 - w) + arr[hi] * w
+}
+
+async function fetchAltimetryHeights(points, signal, onBatch) {
+    const out = new Array(points.length).fill(null)
+    const batches = []
+    for (let i = 0; i < points.length; i += ALTI_BATCH_SIZE) {
+        const batch = points.slice(i, i + ALTI_BATCH_SIZE)
+        batches.push({batch, offset: i})
+    }
+
+    let completed = 0
+    await runWithConcurrencyLimit(batches, ALTI_MAX_CONCURRENCY, async ({batch, offset}) => {
+        const lon = batch.map(p => p.lng).join("|")
+        const lat = batch.map(p => p.lat).join("|")
+        const body = {
+            lon,
+            lat,
+            resource: ALTI_RESOURCE_ID,
+            delimiter: "|",
+            measures: "true",
+            zonly: "false"
+        }
+        const res = await fetch(ALTI_ENDPOINT, {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify(body),
+            signal
+        })
+        if (!res.ok) {
+            const t = await res.text().catch(() => "")
+            throw new Error(`Altimetry error (${res.status}) ${t ? "- " + t.slice(0, 140) : ""}`.trim())
+        }
+        const json = await res.json()
+        const elevations = Array.isArray(json?.elevations) ? json.elevations : []
+        const batchHeights = new Array(batch.length).fill(null)
+        for (let j = 0; j < batch.length; j++) {
+            const e = elevations[j]
+            if (!e) continue
+            const h = heightFromAltimetry(e)
+            if (Number.isFinite(h)) {
+                out[offset + j] = h
+                batchHeights[j] = h
+            }
+        }
+        completed += 1
+        if (typeof onBatch === "function") {
+            onBatch(offset, batchHeights, completed, batches.length)
+        }
+    })
+    return out
+}
+
+async function runWithConcurrencyLimit(items, limit, worker) {
+    const max = Math.max(1, limit | 0)
+    let cursor = 0
+    const runners = new Array(Math.min(max, items.length)).fill(0).map(async () => {
+        while (cursor < items.length) {
+            const index = cursor++
+            await worker(items[index])
+        }
+    })
+    await Promise.all(runners)
+}
+
+function heightFromAltimetry(e) {
+    const measures = Array.isArray(e?.measures) ? e.measures : []
+    if (!measures.length) return null
+    let mnh = null
+    let mns = null
+    let mnt = null
+    for (const m of measures) {
+        const label = (m?.name ?? m?.title ?? m?.source_name ?? "").toString().toUpperCase()
+        const z = Number(m?.z)
+        if (!Number.isFinite(z)) continue
+        if (mnh === null && label.includes("MNH")) mnh = z
+        if (mns === null && label.includes("MNS")) mns = z
+        if (mnt === null && label.includes("MNT")) mnt = z
+    }
+    if (Number.isFinite(mnh)) return mnh
+    if (Number.isFinite(mns) && Number.isFinite(mnt)) return mns - mnt
+    return null
 }
 
 function polygonAreaMeters2(latlngs) {
@@ -463,162 +459,6 @@ function polygonAreaMeters2(latlngs) {
     return Math.abs(area) / 2
 }
 
-function normalizeBdnbItems(json) {
-    const raw = Array.isArray(json)
-        ? json
-        : Array.isArray(json?.features)
-            ? json.features
-            : Array.isArray(json?.data)
-                ? json.data
-                : Array.isArray(json?.results)
-                    ? json.results
-                    : []
-
-    const items = []
-    for (const entry of raw) {
-        const props = entry?.properties || entry || {}
-        const height = extractHeight(props)
-        if (!Number.isFinite(height)) continue
-
-        const geom =
-            entry?.geometry ??
-            props?.geometry ??
-            entry?.geom ??
-            props?.geom ??
-            props?.geom_groupe ??
-            entry?.geom_groupe
-        const polygons = geojsonToPolygons(geom)
-        const point = extractLatLng(props, geom)
-
-        items.push({
-            height,
-            polygons,
-            lat: point?.lat ?? null,
-            lng: point?.lng ?? null
-        })
-    }
-
-    return items
-}
-
-function extractHeight(props) {
-    const candidates = []
-    if (BDNB_HEIGHT_FIELD) candidates.push(BDNB_HEIGHT_FIELD)
-    candidates.push(
-        "hauteur",
-        "height",
-        "hauteur_m",
-        "hauteur_metres",
-        "hauteur_moyenne",
-        "h_m",
-        "h",
-        "ht"
-    )
-
-    for (const key of candidates) {
-        if (props?.[key] !== undefined && props?.[key] !== null && props?.[key] !== "") {
-            const n = Number(props[key])
-            if (Number.isFinite(n)) return n
-        }
-    }
-
-    return null
-}
-
-function extractLatLng(props, geom) {
-    const latKeys = ["lat", "latitude", "y", "y_lat", "lat_wgs84"]
-    const lngKeys = ["lng", "lon", "longitude", "x", "x_lon", "lon_wgs84"]
-
-    for (const kLat of latKeys) {
-        for (const kLng of lngKeys) {
-            if (props?.[kLat] !== undefined && props?.[kLng] !== undefined) {
-                const lat = Number(props[kLat])
-                const lng = Number(props[kLng])
-                if (Number.isFinite(lat) && Number.isFinite(lng)) return {lat, lng}
-            }
-        }
-    }
-
-    if (geom?.type === "Point" && Array.isArray(geom?.coordinates)) {
-        const [lng, lat] = geom.coordinates
-        if (Number.isFinite(lat) && Number.isFinite(lng)) {
-            const crsName = geom?.crs?.properties?.name || geom?.crs?.name || ""
-            if (isLambert93(crsName)) {
-                const [wgsLng, wgsLat] = lambert93ToWgs84(lng, lat)
-                return {lat: wgsLat, lng: wgsLng}
-            }
-            return {lat, lng}
-        }
-    }
-
-    return null
-}
-
-function geojsonToPolygons(geom) {
-    if (!geom) return null
-    let g = geom
-    if (typeof g === "string") {
-        const trimmed = g.trim()
-        if (/^POLYGON/i.test(trimmed) || /^MULTIPOLYGON/i.test(trimmed)) {
-            return wktToPolygons(trimmed)
-        }
-        try {
-            g = JSON.parse(g)
-        } catch {
-            return null
-        }
-    }
-
-    if (!g || !g.type || !Array.isArray(g.coordinates)) return null
-    const crsName = g?.crs?.properties?.name || g?.crs?.name || ""
-    const useLambert = isLambert93(crsName)
-    if (g.type === "Polygon") {
-        const ring = g.coordinates[0] || []
-        return ring.length
-            ? [ring.map(([lng, lat]) => {
-                if (useLambert) {
-                    const [wgsLng, wgsLat] = lambert93ToWgs84(lng, lat)
-                    return [wgsLat, wgsLng]
-                }
-                return [lat, lng]
-            })]
-            : null
-    }
-    if (g.type === "MultiPolygon") {
-        const polys = []
-        for (const poly of g.coordinates) {
-            const ring = poly?.[0] || []
-            if (ring.length) {
-                polys.push(ring.map(([lng, lat]) => {
-                    if (useLambert) {
-                        const [wgsLng, wgsLat] = lambert93ToWgs84(lng, lat)
-                        return [wgsLat, wgsLng]
-                    }
-                    return [lat, lng]
-                }))
-            }
-        }
-        return polys.length ? polys : null
-    }
-    return null
-}
-
-function wktToPolygons(wkt) {
-    const rings = wkt.match(/\(\([^()]+\)\)/g)
-    if (!rings) return null
-    const polygons = []
-    for (const ring of rings) {
-        const coordsText = ring.replace(/[()]/g, "")
-        const coords = coordsText.split(",").map(pair => {
-            const parts = pair.trim().split(/\s+/).map(Number)
-            if (parts.length < 2 || !Number.isFinite(parts[0]) || !Number.isFinite(parts[1])) return null
-            return [parts[1], parts[0]]
-        }).filter(Boolean)
-        if (coords.length >= 3) polygons.push(coords)
-    }
-    return polygons.length ? polygons : null
-}
-
 function centroidLatLng(geometry) {
     const pts = Array.isArray(geometry) ? geometry : []
     if (!pts.length) return null
@@ -631,70 +471,6 @@ function centroidLatLng(geometry) {
     return {lat: sumLat / pts.length, lng: sumLng / pts.length}
 }
 
-function pointInPolygons(point, polygons) {
-    if (!point || !Array.isArray(polygons)) return false
-    for (const poly of polygons) {
-        if (pointInPolygon(point, poly)) return true
-    }
-    return false
-}
-
-function pointInPolygon(point, polygon) {
-    const pts = Array.isArray(polygon) ? polygon : []
-    if (pts.length < 3) return false
-    const x = point.lng
-    const y = point.lat
-    let inside = false
-    for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
-        const xi = pts[i][1]
-        const yi = pts[i][0]
-        const xj = pts[j][1]
-        const yj = pts[j][0]
-        const intersect = (yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi
-        if (intersect) inside = !inside
-    }
-    return inside
-}
-
-function buildSpatialGrid(items, maxDistanceM) {
-    const cell = Math.max(0.0003, maxDistanceM / 111320)
-    const grid = new Map()
-    for (const item of items) {
-        const key = gridKey(item.lat, item.lng, cell)
-        if (!grid.has(key)) grid.set(key, [])
-        grid.get(key).push(item)
-    }
-    return {grid, cell}
-}
-
-function nearestHeight(point, gridData, maxDistanceM) {
-    const {grid, cell} = gridData
-    const baseX = Math.floor(point.lat / cell)
-    const baseY = Math.floor(point.lng / cell)
-    let best = null
-    let bestD = maxDistanceM
-
-    for (let dx = -1; dx <= 1; dx++) {
-        for (let dy = -1; dy <= 1; dy++) {
-            const key = `${baseX + dx}:${baseY + dy}`
-            const bucket = grid.get(key)
-            if (!bucket) continue
-            for (const item of bucket) {
-                const d = distanceMeters(point.lat, point.lng, item.lat, item.lng)
-                if (d <= bestD) {
-                    bestD = d
-                    best = item.height
-                }
-            }
-        }
-    }
-
-    return best
-}
-
-function gridKey(lat, lng, cell) {
-    return `${Math.floor(lat / cell)}:${Math.floor(lng / cell)}`
-}
 
 function distanceMeters(lat1, lng1, lat2, lng2) {
     const R = 6378137
@@ -703,59 +479,3 @@ function distanceMeters(lat1, lng1, lat2, lng2) {
     const y = (lat2 - lat1) * toRad
     return Math.sqrt(x * x + y * y) * R
 }
-
-function wgs84ToLambert93(lng, lat) {
-    const a = 6378137.0
-    const e = 0.0818191910428158
-    const lon0 = 3 * Math.PI / 180
-    const n = 0.7256077650532670
-    const C = 11754255.426096
-    const xs = 700000.0
-    const ys = 12655612.049876
-
-    const phi = lat * Math.PI / 180
-    const lambda = lng * Math.PI / 180
-    const sinPhi = Math.sin(phi)
-    const eSinPhi = e * sinPhi
-    const t = Math.tan(Math.PI / 4 - phi / 2) / Math.pow((1 - eSinPhi) / (1 + eSinPhi), e / 2)
-    const r = C * Math.pow(t, n)
-    const theta = n * (lambda - lon0)
-    const x = xs + r * Math.sin(theta)
-    const y = ys - r * Math.cos(theta)
-    return [x, y]
-}
-
-function lambert93ToWgs84(x, y) {
-    const n = 0.7256077650532670
-    const C = 11754255.426096
-    const xs = 700000.0
-    const ys = 12655612.049876
-    const lon0 = 3 * Math.PI / 180
-    const e = 0.0818191910428158
-    const a = 6378137.0
-
-    const r = Math.sqrt((x - xs) * (x - xs) + (y - ys) * (y - ys))
-    const gamma = Math.atan((x - xs) / (ys - y))
-    const latIso = -1 / n * Math.log(r / C)
-
-    let phi = 2 * Math.atan(Math.exp(latIso)) - Math.PI / 2
-    let prev = 0
-    let iter = 0
-    while (Math.abs(phi - prev) > 1e-11 && iter < 10) {
-        prev = phi
-        const sinPhi = Math.sin(phi)
-        const part = (1 + e * sinPhi) / (1 - e * sinPhi)
-        phi = 2 * Math.atan(Math.exp(latIso) * Math.pow(part, e / 2)) - Math.PI / 2
-        iter++
-    }
-
-    const lambda = lon0 + gamma / n
-    const lat = phi * 180 / Math.PI
-    const lng = lambda * 180 / Math.PI
-    return [lng, lat]
-}
-
-function isLambert93(crsName) {
-    return /2154/.test(String(crsName))
-}
-
