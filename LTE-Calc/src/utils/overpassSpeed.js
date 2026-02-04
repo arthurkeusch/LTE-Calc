@@ -12,22 +12,9 @@ export async function fetchRoadSpeedsInSquare(lat, lng, sideKm, signal) {
 (
   way["highway"](${south},${west},${north},${east});
 );
-out body geom;`
+out tags geom;`
 
-    const url = "https://overpass-api.de/api/interpreter"
-    const res = await fetch(url, {
-        method: "POST",
-        headers: {"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8"},
-        body: "data=" + encodeURIComponent(query),
-        signal
-    })
-
-    if (!res.ok) {
-        const t = await res.text().catch(() => "")
-        throw new Error(`Overpass error (${res.status}) ${t ? "- " + t.slice(0, 140) : ""}`.trim())
-    }
-
-    const json = await res.json()
+    const json = await fetchOverpassJson(query, signal)
     const els = Array.isArray(json?.elements) ? json.elements : []
 
     const roads = []
@@ -67,22 +54,9 @@ export async function fetchBuildingsInSquare(lat, lng, sideKm, signal) {
 (
   way["building"](${south},${west},${north},${east});
 );
-out body geom;`
+out ids geom;`
 
-    const url = "https://overpass-api.de/api/interpreter"
-    const res = await fetch(url, {
-        method: "POST",
-        headers: {"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8"},
-        body: "data=" + encodeURIComponent(query),
-        signal
-    })
-
-    if (!res.ok) {
-        const t = await res.text().catch(() => "")
-        throw new Error(`Overpass error (${res.status}) ${t ? "- " + t.slice(0, 140) : ""}`.trim())
-    }
-
-    const json = await res.json()
+    const json = await fetchOverpassJson(query, signal)
     const els = Array.isArray(json?.elements) ? json.elements : []
 
     const buildings = []
@@ -103,6 +77,56 @@ out body geom;`
     }
 
     return {areas, buildings}
+}
+
+const OVERPASS_PRIMARY = "https://overpass-api.de/api/interpreter"
+const OVERPASS_RETRIES = 3
+const OVERPASS_RETRY_DELAY_MS = 500
+
+async function fetchOverpassJson(query, signal) {
+    let lastError = null
+    const urls = [OVERPASS_PRIMARY]
+
+    for (const url of urls) {
+        for (let attempt = 1; attempt <= OVERPASS_RETRIES; attempt++) {
+            try {
+                const res = await fetch(url, {
+                    method: "POST",
+                    headers: {"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8"},
+                    body: "data=" + encodeURIComponent(query),
+                    signal
+                })
+
+                if (!res.ok) {
+                    const t = await res.text().catch(() => "")
+                    throw new Error(`Overpass error (${res.status}) ${t ? "- " + t.slice(0, 140) : ""}`.trim())
+                }
+
+                return await res.json()
+            } catch (err) {
+                if (err?.name === "AbortError") throw err
+                lastError = err
+                if (attempt < OVERPASS_RETRIES) {
+                    await delay(OVERPASS_RETRY_DELAY_MS * attempt, signal)
+                }
+            }
+        }
+    }
+
+    throw lastError || new Error("Failed to fetch Overpass data")
+}
+
+function delay(ms, signal) {
+    if (signal?.aborted) return Promise.reject(new DOMException("Aborted", "AbortError"))
+    return new Promise((resolve, reject) => {
+        const t = setTimeout(resolve, ms)
+        if (signal) {
+            signal.addEventListener("abort", () => {
+                clearTimeout(t)
+                reject(new DOMException("Aborted", "AbortError"))
+            }, {once: true})
+        }
+    })
 }
 
 function speedFromTags(tags, highway) {
@@ -215,22 +239,14 @@ export function computeBuildingStats(values) {
     const max = v[count - 1]
     const avg = v.reduce((s, x) => s + x, 0) / count
 
-    const deciles = []
-    for (let i = 1; i <= 9; i++) deciles.push(percentileSorted(v, i / 10))
-
-    const edges = [min, ...deciles, max]
-    const hist10 = new Array(10).fill(0)
+    const bins = 10
+    const hist10 = new Array(bins).fill(0)
+    const span = max - min || 1
+    const step = span / bins
     for (const x of v) {
-        let idx = 9
-        for (let i = 0; i < 10; i++) {
-            const a = edges[i]
-            const b = edges[i + 1]
-            const last = i === 9
-            if ((x >= a && x < b) || (last && x <= b)) {
-                idx = i
-                break
-            }
-        }
+        let idx = Math.floor((x - min) / step)
+        if (idx < 0) idx = 0
+        if (idx >= bins) idx = bins - 1
         hist10[idx]++
     }
 
@@ -239,7 +255,7 @@ export function computeBuildingStats(values) {
         min,
         max,
         avg,
-        deciles,
+        deciles: [],
         hist10
     }
 }
@@ -277,3 +293,4 @@ function polygonAreaMeters2(latlngs) {
 
     return Math.abs(area) / 2
 }
+
