@@ -94,6 +94,140 @@ app.post("/cache/building-heights/store", async (req, res) => {
     res.json({stored});
 });
 
+app.get("/cache/building-heights/stats/stream", async (req, res) => {
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    res.setHeader("X-Accel-Buffering", "no");
+    res.flushHeaders && res.flushHeaders();
+
+    let closed = false;
+    req.on("close", () => {
+        closed = true;
+    });
+
+    let cursor = "0";
+    let count = 0;
+    let bytes = 0;
+    res.write(`data: ${JSON.stringify({count, bytes, mb: 0, done: false})}\n\n`);
+    res.flush && res.flush();
+    do {
+        const result = await redis.scan(cursor, {
+            MATCH: "lte:building-height:*",
+            COUNT: 500
+        });
+        cursor = String(result?.cursor ?? "0");
+        const keys = Array.isArray(result?.keys) ? result.keys : [];
+        if (keys.length) {
+            count += keys.length;
+            const pipeline = redis.multi();
+            for (const key of keys) pipeline.strLen(key);
+            const sizes = await pipeline.exec();
+            for (let i = 0; i < keys.length; i++) {
+                const size = sizes[i];
+                const n = Number(size);
+                if (Number.isFinite(n)) bytes += n;
+                bytes += Buffer.byteLength(keys[i], "utf8");
+            }
+        }
+        res.write(`data: ${JSON.stringify({count, bytes, mb: bytes / (1024 * 1024), done: false})}\n\n`);
+        res.flush && res.flush();
+        await new Promise(resolve => setImmediate(resolve));
+    } while (!closed && cursor !== "0");
+    if (!closed) {
+        res.write(`data: ${JSON.stringify({count, bytes, mb: bytes / (1024 * 1024), done: true})}\n\n`);
+        res.end();
+    }
+});
+
+app.get("/cache/building-heights/count", async (req, res) => {
+    let cursor = "0";
+    let count = 0;
+    do {
+        const result = await redis.scan(cursor, {
+            MATCH: "lte:building-height:*",
+            COUNT: 1000
+        });
+        cursor = String(result?.cursor ?? "0");
+        const keys = Array.isArray(result?.keys) ? result.keys : [];
+        count += keys.length;
+    } while (cursor !== "0");
+    res.json({count});
+});
+
+app.get("/cache/building-heights/stats", async (req, res) => {
+    let cursor = "0";
+    let count = 0;
+    let bytes = 0;
+    let usedExact = true;
+    do {
+        const result = await redis.scan(cursor, {
+            MATCH: "lte:building-height:*",
+            COUNT: 1000
+        });
+        cursor = String(result?.cursor ?? "0");
+        const keys = Array.isArray(result?.keys) ? result.keys : [];
+        if (keys.length) {
+            count += keys.length;
+            let sizes = null;
+            if (usedExact) {
+                try {
+                    const pipeline = redis.multi();
+                    for (const key of keys) pipeline.sendCommand(["MEMORY", "USAGE", key]);
+                    sizes = await pipeline.exec();
+                } catch {
+                    usedExact = false;
+                    sizes = null;
+                }
+                if (sizes) {
+                    let ok = true;
+                    for (const size of sizes) {
+                        const n = Number(size);
+                        if (!Number.isFinite(n)) {
+                            ok = false;
+                            break;
+                        }
+                        bytes += n;
+                    }
+                    if (!ok) {
+                        usedExact = false;
+                        sizes = null;
+                    }
+                }
+            }
+            if (!sizes) {
+                const pipeline = redis.multi();
+                for (const key of keys) pipeline.strLen(key);
+                const estSizes = await pipeline.exec();
+                for (let i = 0; i < keys.length; i++) {
+                    const size = estSizes[i];
+                    const n = Number(size);
+                    if (Number.isFinite(n)) bytes += n;
+                    bytes += Buffer.byteLength(keys[i], "utf8");
+                }
+            }
+        }
+    } while (cursor !== "0");
+    res.json({count, bytes, mb: bytes / (1024 * 1024), exact: usedExact});
+});
+
+app.post("/cache/building-heights/reset", async (req, res) => {
+    let cursor = "0";
+    let deleted = 0;
+    do {
+        const result = await redis.scan(cursor, {
+            MATCH: "lte:building-height:*",
+            COUNT: 500
+        });
+        cursor = String(result?.cursor ?? "0");
+        const keys = Array.isArray(result?.keys) ? result.keys : [];
+        if (keys.length) {
+            deleted += await redis.del(keys);
+        }
+    } while (cursor !== "0");
+    res.json({deleted});
+});
+
 async function start() {
     await connectRedis();
     app.listen(PORT, () => {

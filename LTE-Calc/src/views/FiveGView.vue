@@ -15,6 +15,11 @@
         :densityStats="densityStats"
         :anyLoading="anyLoading"
         :loadingProgress="loadingProgress"
+        :cacheResetting="cacheResetting"
+        :cacheResetError="cacheResetError"
+        :cacheStats="cacheStats"
+        :cacheStatsLoading="cacheStatsLoading"
+        @reset-cache="handleResetCache"
     />
     <FiveGMap
         v-model:selected="selected"
@@ -31,7 +36,7 @@
 </template>
 
 <script setup>
-import {ref, watch, computed} from "vue"
+import {ref, watch, computed, onMounted} from "vue"
 import FiveGSidePanel from "@/components/FiveGSidePanel.vue"
 import FiveGMap from "@/components/FiveGMap.vue"
 import {fetchRoadSpeedsInSquare, computeSpeedStats} from "@/utils/roads"
@@ -39,6 +44,8 @@ import {
   fetchBuildingsInSquare,
   loadBuildingHeightsFromCache,
   saveBuildingHeightsToCache,
+  resetBuildingHeightsCache,
+  fetchBuildingHeightsCacheStats,
   computeBuildingStats,
   computeDensityStats,
   computeHeightStats,
@@ -69,6 +76,10 @@ const densityGrid = ref([])
 const speedProgress = ref(0)
 const buildingProgress = ref(0)
 const heightProgress = ref(0)
+const cacheResetting = ref(false)
+const cacheResetError = ref(null)
+const cacheStats = ref({count: 0, mb: 0})
+const cacheStatsLoading = ref(false)
 const anyLoading = computed(() => speedLoading.value || buildingLoading.value || buildingHeightLoading.value)
 const loadingProgress = computed(() => {
   const total = 3
@@ -76,48 +87,42 @@ const loadingProgress = computed(() => {
   return Math.max(0, Math.min(1, sum / total))
 })
 
+async function handleResetCache() {
+  if (cacheResetting.value) return
+  cacheResetError.value = null
+  if (!window.confirm("Reset Redis cache for building heights?")) return
+  cacheResetting.value = true
+  try {
+    await resetBuildingHeightsCache()
+    await loadCacheCount()
+  } catch (err) {
+    cacheResetError.value = err?.message || "Failed to reset cache"
+  } finally {
+    cacheResetting.value = false
+  }
+}
+
+async function loadCacheCount() {
+  cacheStatsLoading.value = true
+  try {
+    const stats = await fetchBuildingHeightsCacheStats()
+    cacheStats.value = {
+      count: Number(stats?.count) || 0,
+      mb: Number(stats?.mb) || 0
+    }
+  } catch {
+    cacheStats.value = {count: 0, mb: 0}
+  } finally {
+    cacheStatsLoading.value = false
+  }
+}
+
+onMounted(() => {
+  loadCacheCount()
+})
+
 let aborter = null
 let debounceTimer = null
-
-function computeDensityFromBuildings(buildings, center, sideKm) {
-  if (!center || !Array.isArray(buildings) || buildings.length === 0) return null
-  const sideMeters = Number(sideKm) * 1000
-  if (!Number.isFinite(sideMeters) || sideMeters <= 0) return null
-  const cellSize = 100
-  const cellsPerSide = Math.max(1, Math.ceil(sideMeters / cellSize))
-  const totalCells = cellsPerSide * cellsPerSide
-  const sums = new Array(totalCells).fill(0)
-  const counts = new Array(totalCells).fill(0)
-  const half = sideMeters / 2
-  const lat0 = center.lat
-  const toRad = Math.PI / 180
-  const R = 6378137
-  const cosLat = Math.cos(lat0 * toRad)
-
-  for (const b of buildings) {
-    if (!Number.isFinite(b?.area) || !Array.isArray(b?.geometry) || b.geometry.length === 0) continue
-    const c = centroidLatLng(b.geometry)
-    if (!c) continue
-    const dx = (c.lng - center.lng) * toRad * cosLat * R
-    const dy = (c.lat - center.lat) * toRad * R
-    const ix = Math.floor((dx + half) / cellSize)
-    const iy = Math.floor((dy + half) / cellSize)
-    if (ix < 0 || iy < 0 || ix >= cellsPerSide || iy >= cellsPerSide) continue
-    const idx = iy * cellsPerSide + ix
-    sums[idx] += b.area
-    counts[idx] += 1
-  }
-
-  const cellArea = cellSize * cellSize
-  const coverages = sums.map(a => Math.max(0, Math.min(1, a / cellArea)))
-  const maxCount = Math.max(1, ...counts)
-  const scores = coverages.map((c, i) => {
-    const countNorm = counts[i] / maxCount
-    const countBoost = Math.sqrt(Math.max(0, countNorm))
-    return Math.max(0, Math.min(1, c * 0.8 + countBoost * 0.2))
-  })
-  return computeDensityStats(scores)
-}
 
 function computeDensityGrid(buildings, center, sideKm) {
   if (!center || !Array.isArray(buildings) || buildings.length === 0) {

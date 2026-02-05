@@ -4,6 +4,8 @@ const OVERPASS_RETRY_DELAY_MS = 500
 const BACKEND_BASE_URL = "https://lte-calc.arthur-keusch.fr:3000"
 const CACHE_BUILDING_HEIGHTS_ENDPOINT = `${BACKEND_BASE_URL}/cache/building-heights`
 const CACHE_BUILDING_HEIGHTS_STORE_ENDPOINT = `${BACKEND_BASE_URL}/cache/building-heights/store`
+const CACHE_BUILDING_HEIGHTS_RESET_ENDPOINT = `${BACKEND_BASE_URL}/cache/building-heights/reset`
+const CACHE_BUILDING_HEIGHTS_STATS_ENDPOINT = `${BACKEND_BASE_URL}/cache/building-heights/stats`
 const CACHE_HEIGHTS_QUERY_BATCH = 100000
 
 const ALTI_ENDPOINT = "https://data.geopf.fr/altimetrie/1.0/calcul/alti/rest/elevation.json"
@@ -96,6 +98,32 @@ export async function saveBuildingHeightsToCache(heights, signal) {
     } catch {
         return
     }
+}
+
+export async function resetBuildingHeightsCache(signal) {
+    const res = await fetch(CACHE_BUILDING_HEIGHTS_RESET_ENDPOINT, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        signal
+    })
+    if (!res.ok) {
+        const t = await res.text().catch(() => "")
+        throw new Error(`Cache reset error (${res.status}) ${t ? "- " + t.slice(0, 140) : ""}`.trim())
+    }
+    return await res.json().catch(() => ({}))
+}
+
+export async function fetchBuildingHeightsCacheStats(signal) {
+    const res = await fetch(CACHE_BUILDING_HEIGHTS_STATS_ENDPOINT, {
+        method: "GET",
+        headers: {"Content-Type": "application/json"},
+        signal
+    })
+    if (!res.ok) {
+        const t = await res.text().catch(() => "")
+        throw new Error(`Cache stats error (${res.status}) ${t ? "- " + t.slice(0, 140) : ""}`.trim())
+    }
+    return await res.json().catch(() => ({}))
 }
 
 export function computeBuildingStats(values) {
@@ -222,7 +250,7 @@ export async function applyAltimetryHeights(buildings, signal, onProgress) {
     for (let i = 0; i < buildings.length; i++) {
         const b = buildings[i]
         if (Number.isFinite(b.height)) continue
-        const c = centroidLatLng(b.geometry)
+        const c = pickPointInsidePolygon(b.geometry)
         if (!c) continue
         missingIdx.push(i)
         points.push(c)
@@ -441,9 +469,27 @@ export function polygonAreaMeters2(latlngs) {
     return Math.abs(area) / 2
 }
 
-export function centroidLatLng(geometry) {
+function pickPointInsidePolygon(geometry) {
     const pts = Array.isArray(geometry) ? geometry : []
-    if (!pts.length) return null
+    if (pts.length < 3) return null
+    const centroid = polygonCentroidLatLng(pts)
+    if (centroid && pointInPolygon(centroid, pts)) return centroid
+    const avg = averageLatLng(pts)
+    if (avg && pointInPolygon(avg, pts)) return avg
+    for (const p of pts) {
+        const candidate = {lat: p[0], lng: p[1]}
+        if (pointInPolygon(candidate, pts)) return candidate
+    }
+    for (let i = 0; i < pts.length; i++) {
+        const a = pts[i]
+        const b = pts[(i + 1) % pts.length]
+        const mid = {lat: (a[0] + b[0]) / 2, lng: (a[1] + b[1]) / 2}
+        if (pointInPolygon(mid, pts)) return mid
+    }
+    return null
+}
+
+function averageLatLng(pts) {
     let sumLat = 0
     let sumLng = 0
     for (const p of pts) {
@@ -451,4 +497,53 @@ export function centroidLatLng(geometry) {
         sumLng += p[1]
     }
     return {lat: sumLat / pts.length, lng: sumLng / pts.length}
+}
+
+function polygonCentroidLatLng(pts) {
+    let twiceArea = 0
+    let cx = 0
+    let cy = 0
+    for (let i = 0; i < pts.length; i++) {
+        const a = pts[i]
+        const b = pts[(i + 1) % pts.length]
+        const x0 = a[1]
+        const y0 = a[0]
+        const x1 = b[1]
+        const y1 = b[0]
+        const cross = x0 * y1 - x1 * y0
+        twiceArea += cross
+        cx += (x0 + x1) * cross
+        cy += (y0 + y1) * cross
+    }
+    if (Math.abs(twiceArea) < 1e-12) return averageLatLng(pts)
+    const inv = 1 / (3 * twiceArea)
+    return {lat: cy * inv, lng: cx * inv}
+}
+
+function pointInPolygon(point, pts) {
+    const x = point.lng
+    const y = point.lat
+    let inside = false
+    for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+        const xi = pts[i][1]
+        const yi = pts[i][0]
+        const xj = pts[j][1]
+        const yj = pts[j][0]
+        if (pointOnSegment(x, y, xi, yi, xj, yj)) return true
+        const intersect = ((yi > y) !== (yj > y)) &&
+            (x < ((xj - xi) * (y - yi)) / (yj - yi) + xi)
+        if (intersect) inside = !inside
+    }
+    return inside
+}
+
+function pointOnSegment(x, y, x1, y1, x2, y2) {
+    const eps = 1e-12
+    const cross = (x - x1) * (y2 - y1) - (y - y1) * (x2 - x1)
+    if (Math.abs(cross) > eps) return false
+    const dot = (x - x1) * (x2 - x1) + (y - y1) * (y2 - y1)
+    if (dot < -eps) return false
+    const len2 = (x2 - x1) * (x2 - x1) + (y2 - y1) * (y2 - y1)
+    if (dot - len2 > eps) return false
+    return true
 }

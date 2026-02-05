@@ -321,6 +321,26 @@
             </div>
           </div>
         </div>
+
+        <div class="divider"></div>
+
+        <div class="section">
+          <div class="sTitle">Cache</div>
+          <button
+              class="actionBtn"
+              type="button"
+              :disabled="cacheResetting"
+              @click="$emit('reset-cache')"
+          >
+            <span v-if="cacheResetting">Resetting cache...</span>
+            <span v-else>Reset Redis cache</span>
+          </button>
+          <div v-if="cacheResetError" class="error">{{ cacheResetError }}</div>
+          <div class="muted">
+            Cache: <span v-if="cacheStatsLoading">...</span>
+            <span v-else>{{ cacheStats.count }} batiments - {{ cacheStats.mb.toFixed(2) }} Mo</span>
+          </div>
+        </div>
       </div>
 
       <div class="foot">
@@ -356,10 +376,14 @@ const props = defineProps({
   buildingHeightError: { type: String, default: null },
   densityStats: { type: Object, default: null },
   anyLoading: { type: Boolean, default: false },
-  loadingProgress: { type: Number, default: 0 }
+  loadingProgress: { type: Number, default: 0 },
+  cacheResetting: { type: Boolean, default: false },
+  cacheResetError: { type: String, default: null },
+  cacheStats: { type: Object, default: () => ({count: 0, mb: 0}) },
+  cacheStatsLoading: { type: Boolean, default: false }
 })
 
-defineEmits(["update:zoneSideKm"])
+defineEmits(["update:zoneSideKm", "reset-cache"])
 
 const padL = 34
 const padR = 10
@@ -907,6 +931,29 @@ const quintileEdges = computed(() => {
   font-size: 11px;
   opacity: 0.7;
   text-align: right;
+}
+
+.actionBtn {
+  width: 100%;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 12px;
+  font-weight: 800;
+  padding: 10px 12px;
+  cursor: pointer;
+  transition: transform 0.15s ease, background 0.15s ease;
+}
+
+.actionBtn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.12);
+  transform: translateY(-1px);
+}
+
+.actionBtn:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
 }
 
 @keyframes spin {
