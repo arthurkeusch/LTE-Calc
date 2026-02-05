@@ -34,9 +34,8 @@
 import {ref, watch, computed} from "vue"
 import FiveGSidePanel from "@/components/FiveGSidePanel.vue"
 import FiveGMap from "@/components/FiveGMap.vue"
+import {fetchRoadSpeedsInSquare, computeSpeedStats} from "@/utils/roads"
 import {
-  fetchRoadSpeedsInSquare,
-  computeSpeedStats,
   fetchBuildingsInSquare,
   loadBuildingHeightsFromCache,
   saveBuildingHeightsToCache,
@@ -44,7 +43,7 @@ import {
   computeDensityStats,
   computeHeightStats,
   applyAltimetryHeights
-} from "@/utils/overpassSpeed"
+} from "@/utils/buildings"
 
 const zoneSideKm = ref(1.0)
 const selected = ref(null)
