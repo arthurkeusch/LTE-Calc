@@ -5,8 +5,12 @@ const app = express();
 const PORT = 3000;
 const REDIS_URLS = ["redis://127.0.0.1:6379", "redis://redis:6379"];
 const CACHE_TTL_SECONDS = 30 * 24 * 60 * 60;
+const CACHE_PREFIX_HEIGHTS = "lte:building-height:";
+const CACHE_PREFIX_ROADS = "lte:roads:";
+const CACHE_PREFIX_BUILDINGS = "lte:buildings:";
+const CACHE_PREFIX_DENSITY = "lte:density:";
 
-app.use(express.json({limit: "2mb"}));
+app.use(express.json({limit: "10mb"}));
 app.use((req, res, next) => {
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
@@ -52,7 +56,81 @@ async function connectRedis() {
 }
 
 function heightKey(id) {
-    return `lte:building-height:${id}`;
+    return `${CACHE_PREFIX_HEIGHTS}${id}`;
+}
+
+function cacheKey(prefix, key) {
+    return `${prefix}${key}`;
+}
+
+function normalizeCacheKey(value) {
+    if (value === undefined || value === null) return "";
+    return String(value);
+}
+
+async function supportsMemoryUsage() {
+    try {
+        await redis.sendCommand(["MEMORY", "USAGE", `${CACHE_PREFIX_HEIGHTS}__probe__`]);
+        return true;
+    } catch {
+        return false;
+    }
+}
+
+async function scanCacheStats(prefix, useExact) {
+    let cursor = "0";
+    let count = 0;
+    let bytes = 0;
+    let exact = useExact;
+    do {
+        const result = await redis.scan(cursor, {
+            MATCH: `${prefix}*`,
+            COUNT: 1000
+        });
+        cursor = String(result?.cursor ?? "0");
+        const keys = Array.isArray(result?.keys) ? result.keys : [];
+        if (!keys.length) continue;
+        count += keys.length;
+        if (exact) {
+            try {
+                for (const key of keys) {
+                    const size = await redis.sendCommand(["MEMORY", "USAGE", key]);
+                    const n = Number(size);
+                    if (Number.isFinite(n)) bytes += n;
+                }
+                continue;
+            } catch {
+                exact = false;
+            }
+        }
+        const pipeline = redis.multi();
+        for (const key of keys) pipeline.strLen(key);
+        const sizes = await pipeline.exec();
+        for (let i = 0; i < keys.length; i++) {
+            const size = sizes[i];
+            const n = Number(size);
+            if (Number.isFinite(n)) bytes += n;
+            bytes += Buffer.byteLength(keys[i], "utf8");
+        }
+    } while (cursor !== "0");
+    return {count, bytes, mb: bytes / (1024 * 1024), exact};
+}
+
+async function deleteByPrefix(prefix) {
+    let cursor = "0";
+    let deleted = 0;
+    do {
+        const result = await redis.scan(cursor, {
+            MATCH: `${prefix}*`,
+            COUNT: 1000
+        });
+        cursor = String(result?.cursor ?? "0");
+        const keys = Array.isArray(result?.keys) ? result.keys : [];
+        if (keys.length) {
+            deleted += await redis.del(keys);
+        }
+    } while (cursor !== "0");
+    return deleted;
 }
 
 app.get("/", (req, res) => {
@@ -94,6 +172,75 @@ app.post("/cache/building-heights/store", async (req, res) => {
     res.json({stored});
 });
 
+app.post("/cache/roads", async (req, res) => {
+    const key = normalizeCacheKey(req.body?.key);
+    if (!key) return res.json({hit: false});
+    const value = await redis.get(cacheKey(CACHE_PREFIX_ROADS, key));
+    if (!value) return res.json({hit: false});
+    try {
+        const data = JSON.parse(value);
+        return res.json({hit: true, data});
+    } catch {
+        return res.json({hit: false});
+    }
+});
+
+app.post("/cache/roads/store", async (req, res) => {
+    const key = normalizeCacheKey(req.body?.key);
+    const data = req.body?.data;
+    if (!key || !data || typeof data !== "object") {
+        return res.status(400).json({error: "Invalid roads payload"});
+    }
+    await redis.set(cacheKey(CACHE_PREFIX_ROADS, key), JSON.stringify(data), {EX: CACHE_TTL_SECONDS});
+    res.json({stored: true});
+});
+
+app.post("/cache/buildings", async (req, res) => {
+    const key = normalizeCacheKey(req.body?.key);
+    if (!key) return res.json({hit: false});
+    const value = await redis.get(cacheKey(CACHE_PREFIX_BUILDINGS, key));
+    if (!value) return res.json({hit: false});
+    try {
+        const data = JSON.parse(value);
+        return res.json({hit: true, data});
+    } catch {
+        return res.json({hit: false});
+    }
+});
+
+app.post("/cache/buildings/store", async (req, res) => {
+    const key = normalizeCacheKey(req.body?.key);
+    const data = req.body?.data;
+    if (!key || !data || typeof data !== "object") {
+        return res.status(400).json({error: "Invalid buildings payload"});
+    }
+    await redis.set(cacheKey(CACHE_PREFIX_BUILDINGS, key), JSON.stringify(data), {EX: CACHE_TTL_SECONDS});
+    res.json({stored: true});
+});
+
+app.post("/cache/density", async (req, res) => {
+    const key = normalizeCacheKey(req.body?.key);
+    if (!key) return res.json({hit: false});
+    const value = await redis.get(cacheKey(CACHE_PREFIX_DENSITY, key));
+    if (!value) return res.json({hit: false});
+    try {
+        const data = JSON.parse(value);
+        return res.json({hit: true, data});
+    } catch {
+        return res.json({hit: false});
+    }
+});
+
+app.post("/cache/density/store", async (req, res) => {
+    const key = normalizeCacheKey(req.body?.key);
+    const data = req.body?.data;
+    if (!key || !data || typeof data !== "object") {
+        return res.status(400).json({error: "Invalid density payload"});
+    }
+    await redis.set(cacheKey(CACHE_PREFIX_DENSITY, key), JSON.stringify(data), {EX: CACHE_TTL_SECONDS});
+    res.json({stored: true});
+});
+
 app.get("/cache/building-heights/stats/stream", async (req, res) => {
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
@@ -113,7 +260,7 @@ app.get("/cache/building-heights/stats/stream", async (req, res) => {
     res.flush && res.flush();
     do {
         const result = await redis.scan(cursor, {
-            MATCH: "lte:building-height:*",
+            MATCH: `${CACHE_PREFIX_HEIGHTS}*`,
             COUNT: 500
         });
         cursor = String(result?.cursor ?? "0");
@@ -145,7 +292,7 @@ app.get("/cache/building-heights/count", async (req, res) => {
     let count = 0;
     do {
         const result = await redis.scan(cursor, {
-            MATCH: "lte:building-height:*",
+            MATCH: `${CACHE_PREFIX_HEIGHTS}*`,
             COUNT: 1000
         });
         cursor = String(result?.cursor ?? "0");
@@ -156,76 +303,38 @@ app.get("/cache/building-heights/count", async (req, res) => {
 });
 
 app.get("/cache/building-heights/stats", async (req, res) => {
-    let cursor = "0";
-    let count = 0;
-    let bytes = 0;
-    let usedExact = true;
-    do {
-        const result = await redis.scan(cursor, {
-            MATCH: "lte:building-height:*",
-            COUNT: 1000
-        });
-        cursor = String(result?.cursor ?? "0");
-        const keys = Array.isArray(result?.keys) ? result.keys : [];
-        if (keys.length) {
-            count += keys.length;
-            let sizes = null;
-            if (usedExact) {
-                try {
-                    const pipeline = redis.multi();
-                    for (const key of keys) pipeline.sendCommand(["MEMORY", "USAGE", key]);
-                    sizes = await pipeline.exec();
-                } catch {
-                    usedExact = false;
-                    sizes = null;
-                }
-                if (sizes) {
-                    let ok = true;
-                    for (const size of sizes) {
-                        const n = Number(size);
-                        if (!Number.isFinite(n)) {
-                            ok = false;
-                            break;
-                        }
-                        bytes += n;
-                    }
-                    if (!ok) {
-                        usedExact = false;
-                        sizes = null;
-                    }
-                }
-            }
-            if (!sizes) {
-                const pipeline = redis.multi();
-                for (const key of keys) pipeline.strLen(key);
-                const estSizes = await pipeline.exec();
-                for (let i = 0; i < keys.length; i++) {
-                    const size = estSizes[i];
-                    const n = Number(size);
-                    if (Number.isFinite(n)) bytes += n;
-                    bytes += Buffer.byteLength(keys[i], "utf8");
-                }
-            }
-        }
-    } while (cursor !== "0");
-    res.json({count, bytes, mb: bytes / (1024 * 1024), exact: usedExact});
+    const useExact = await supportsMemoryUsage();
+    const stats = await scanCacheStats(CACHE_PREFIX_HEIGHTS, useExact);
+    res.json({count: stats.count, bytes: stats.bytes, mb: stats.mb, exact: stats.exact});
+});
+
+app.get("/cache/stats", async (req, res) => {
+    const useExact = await supportsMemoryUsage();
+    const heights = await scanCacheStats(CACHE_PREFIX_HEIGHTS, useExact);
+    const roads = await scanCacheStats(CACHE_PREFIX_ROADS, heights.exact);
+    const buildings = await scanCacheStats(CACHE_PREFIX_BUILDINGS, heights.exact);
+    const density = await scanCacheStats(CACHE_PREFIX_DENSITY, heights.exact);
+    const totalBytes = heights.bytes + roads.bytes + buildings.bytes + density.bytes;
+    const totalCount = heights.count + roads.count + buildings.count + density.count;
+    res.json({
+        exact: heights.exact && roads.exact && buildings.exact && density.exact,
+        total: {count: totalCount, bytes: totalBytes, mb: totalBytes / (1024 * 1024)},
+        heights,
+        roads,
+        buildings,
+        density
+    });
 });
 
 app.post("/cache/building-heights/reset", async (req, res) => {
-    let cursor = "0";
-    let deleted = 0;
-    do {
-        const result = await redis.scan(cursor, {
-            MATCH: "lte:building-height:*",
-            COUNT: 500
-        });
-        cursor = String(result?.cursor ?? "0");
-        const keys = Array.isArray(result?.keys) ? result.keys : [];
-        if (keys.length) {
-            deleted += await redis.del(keys);
-        }
-    } while (cursor !== "0");
-    res.json({deleted});
+    const deleted = {
+        heights: await deleteByPrefix(CACHE_PREFIX_HEIGHTS),
+        roads: await deleteByPrefix(CACHE_PREFIX_ROADS),
+        buildings: await deleteByPrefix(CACHE_PREFIX_BUILDINGS),
+        density: await deleteByPrefix(CACHE_PREFIX_DENSITY)
+    };
+    const total = deleted.heights + deleted.roads + deleted.buildings + deleted.density;
+    res.json({deleted, total});
 });
 
 async function start() {

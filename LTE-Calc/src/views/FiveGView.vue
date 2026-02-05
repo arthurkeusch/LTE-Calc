@@ -45,12 +45,15 @@ import {
   loadBuildingHeightsFromCache,
   saveBuildingHeightsToCache,
   resetBuildingHeightsCache,
-  fetchBuildingHeightsCacheStats,
+  fetchCacheStats,
+  loadDensityFromCache,
+  saveDensityToCache,
   computeBuildingStats,
   computeDensityStats,
   computeHeightStats,
   applyAltimetryHeights
 } from "@/utils/buildings"
+import {areaCacheKey} from "@/utils/cacheKeys"
 
 const zoneSideKm = ref(1.0)
 const selected = ref(null)
@@ -78,7 +81,15 @@ const buildingProgress = ref(0)
 const heightProgress = ref(0)
 const cacheResetting = ref(false)
 const cacheResetError = ref(null)
-const cacheStats = ref({count: 0, mb: 0})
+const emptyCacheStats = () => ({
+  exact: true,
+  total: {count: 0, mb: 0},
+  heights: {count: 0, mb: 0},
+  roads: {count: 0, mb: 0},
+  buildings: {count: 0, mb: 0},
+  density: {count: 0, mb: 0}
+})
+const cacheStats = ref(emptyCacheStats())
 const cacheStatsLoading = ref(false)
 const anyLoading = computed(() => speedLoading.value || buildingLoading.value || buildingHeightLoading.value)
 const loadingProgress = computed(() => {
@@ -90,11 +101,11 @@ const loadingProgress = computed(() => {
 async function handleResetCache() {
   if (cacheResetting.value) return
   cacheResetError.value = null
-  if (!window.confirm("Reset Redis cache for building heights?")) return
+  if (!window.confirm("Reset Redis cache for all data?")) return
   cacheResetting.value = true
   try {
     await resetBuildingHeightsCache()
-    await loadCacheCount()
+    await loadCacheStats()
   } catch (err) {
     cacheResetError.value = err?.message || "Failed to reset cache"
   } finally {
@@ -102,27 +113,42 @@ async function handleResetCache() {
   }
 }
 
-async function loadCacheCount() {
+async function loadCacheStats() {
   cacheStatsLoading.value = true
   try {
-    const stats = await fetchBuildingHeightsCacheStats()
+    const stats = await fetchCacheStats()
+    const norm = (v) => ({count: Number(v?.count) || 0, mb: Number(v?.mb) || 0})
     cacheStats.value = {
-      count: Number(stats?.count) || 0,
-      mb: Number(stats?.mb) || 0
+      exact: stats?.exact !== false,
+      total: norm(stats?.total),
+      heights: norm(stats?.heights),
+      roads: norm(stats?.roads),
+      buildings: norm(stats?.buildings),
+      density: norm(stats?.density)
     }
   } catch {
-    cacheStats.value = {count: 0, mb: 0}
+    cacheStats.value = emptyCacheStats()
   } finally {
     cacheStatsLoading.value = false
   }
 }
 
 onMounted(() => {
-  loadCacheCount()
+  loadCacheStats()
 })
 
 let aborter = null
 let debounceTimer = null
+let lastDensityKey = null
+let lastDensityCount = 0
+let cacheStatsTimer = null
+
+function scheduleCacheStatsRefresh() {
+  if (cacheStatsTimer) clearTimeout(cacheStatsTimer)
+  cacheStatsTimer = setTimeout(() => {
+    loadCacheStats()
+  }, 800)
+}
 
 function computeDensityGrid(buildings, center, sideKm) {
   if (!center || !Array.isArray(buildings) || buildings.length === 0) {
@@ -383,6 +409,7 @@ function scheduleSpeedRefresh() {
       })
 
       await Promise.allSettled([roadsPromise, buildingsPromise, heightsPromise])
+      scheduleCacheStatsRefresh()
     } finally {
       speedLoading.value = false
       buildingLoading.value = false
@@ -393,15 +420,48 @@ function scheduleSpeedRefresh() {
 
 watch([selected, zoneSideKm], scheduleSpeedRefresh, {deep: true})
 
-watch([buildingsData, selected, zoneSideKm], () => {
+watch([buildingsData, selected, zoneSideKm], async () => {
   if (!selected.value) {
     densityStats.value = null
     densityGrid.value = []
+    lastDensityKey = null
+    lastDensityCount = 0
     return
   }
-  const grid = computeDensityGrid(buildingsData.value, selected.value, zoneSideKm.value)
+  const buildings = buildingsData.value
+  if (!Array.isArray(buildings) || buildings.length === 0) {
+    densityStats.value = null
+    densityGrid.value = []
+    lastDensityKey = null
+    lastDensityCount = 0
+    return
+  }
+
+  const key = areaCacheKey(selected.value.lat, selected.value.lng, zoneSideKm.value)
+  const count = buildings.length
+  if (key === lastDensityKey && count === lastDensityCount) return
+  lastDensityKey = key
+  lastDensityCount = count
+
+  try {
+    const cached = await loadDensityFromCache(key, aborter?.signal)
+    if (key !== lastDensityKey) return
+    if (cached?.cells && Array.isArray(cached.cells)) {
+      densityGrid.value = cached.cells
+      const scores = cached.cells.map(c => c?.score).filter(n => Number.isFinite(n))
+      densityStats.value = computeDensityStats(scores)
+      return
+    }
+  } catch (err) {
+    if (err?.name === "AbortError") return
+  }
+
+  if (key !== lastDensityKey) return
+  const grid = computeDensityGrid(buildings, selected.value, zoneSideKm.value)
   densityStats.value = grid.stats
   densityGrid.value = grid.cells
+  saveDensityToCache(key, {cells: grid.cells}, aborter?.signal)
+  scheduleCacheStatsRefresh()
 }, {deep: true})
 </script>
 

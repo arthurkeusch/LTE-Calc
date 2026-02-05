@@ -337,8 +337,15 @@
           </button>
           <div v-if="cacheResetError" class="error">{{ cacheResetError }}</div>
           <div class="muted">
-            Cache: <span v-if="cacheStatsLoading">...</span>
-            <span v-else>{{ cacheStats.count }} batiments - {{ cacheStats.mb.toFixed(2) }} Mo</span>
+            <div v-if="cacheStatsLoading">Cache: ...</div>
+            <template v-else>
+              <div>Heights: {{ cacheStats.heights.count }} buildings - {{ cacheStats.heights.mb.toFixed(2) }} MB</div>
+              <div>Roads: {{ cacheStats.roads.count }} zones - {{ cacheStats.roads.mb.toFixed(2) }} MB</div>
+              <div>Buildings: {{ cacheStats.buildings.count }} zones - {{ cacheStats.buildings.mb.toFixed(2) }} MB</div>
+              <div>Density: {{ cacheStats.density.count }} zones - {{ cacheStats.density.mb.toFixed(2) }} MB</div>
+              <div>Total: {{ cacheStats.total.mb.toFixed(2) }} MB</div>
+              <div v-if="cacheStats.exact === false">Mode: estimate</div>
+            </template>
           </div>
         </div>
       </div>
@@ -379,7 +386,14 @@ const props = defineProps({
   loadingProgress: { type: Number, default: 0 },
   cacheResetting: { type: Boolean, default: false },
   cacheResetError: { type: String, default: null },
-  cacheStats: { type: Object, default: () => ({count: 0, mb: 0}) },
+  cacheStats: { type: Object, default: () => ({
+    exact: true,
+    total: {count: 0, mb: 0},
+    heights: {count: 0, mb: 0},
+    roads: {count: 0, mb: 0},
+    buildings: {count: 0, mb: 0},
+    density: {count: 0, mb: 0}
+  }) },
   cacheStatsLoading: { type: Boolean, default: false }
 })
 

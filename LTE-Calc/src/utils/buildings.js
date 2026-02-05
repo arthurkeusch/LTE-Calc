@@ -1,11 +1,17 @@
 const OVERPASS_PRIMARY = "https://overpass-api.de/api/interpreter"
+import {areaCacheKey} from "./cacheKeys"
+
 const OVERPASS_RETRIES = 3
 const OVERPASS_RETRY_DELAY_MS = 500
 const BACKEND_BASE_URL = "https://lte-calc.arthur-keusch.fr:3000"
 const CACHE_BUILDING_HEIGHTS_ENDPOINT = `${BACKEND_BASE_URL}/cache/building-heights`
 const CACHE_BUILDING_HEIGHTS_STORE_ENDPOINT = `${BACKEND_BASE_URL}/cache/building-heights/store`
 const CACHE_BUILDING_HEIGHTS_RESET_ENDPOINT = `${BACKEND_BASE_URL}/cache/building-heights/reset`
-const CACHE_BUILDING_HEIGHTS_STATS_ENDPOINT = `${BACKEND_BASE_URL}/cache/building-heights/stats`
+const CACHE_BUILDINGS_ENDPOINT = `${BACKEND_BASE_URL}/cache/buildings`
+const CACHE_BUILDINGS_STORE_ENDPOINT = `${BACKEND_BASE_URL}/cache/buildings/store`
+const CACHE_DENSITY_ENDPOINT = `${BACKEND_BASE_URL}/cache/density`
+const CACHE_DENSITY_STORE_ENDPOINT = `${BACKEND_BASE_URL}/cache/density/store`
+const CACHE_STATS_ENDPOINT = `${BACKEND_BASE_URL}/cache/stats`
 const CACHE_HEIGHTS_QUERY_BATCH = 100000
 
 const ALTI_ENDPOINT = "https://data.geopf.fr/altimetrie/1.0/calcul/alti/rest/elevation.json"
@@ -16,6 +22,10 @@ const ALTI_RETRIES = 3
 const ALTI_RETRY_DELAY_MS = 500
 
 export async function fetchBuildingsInSquare(lat, lng, sideKm, signal) {
+    const cacheKey = areaCacheKey(lat, lng, sideKm)
+    const cached = await loadBuildingsFromCache(cacheKey, signal)
+    if (cached) return cached
+
     const {south, west, north, east} = computeSquareBounds(lat, lng, sideKm)
 
     const query = `[out:json][timeout:25];
@@ -44,7 +54,79 @@ out tags geom;`
         }
     }
 
-    return {areas, buildings}
+    const result = {areas, buildings}
+    await saveBuildingsToCache(cacheKey, result, signal)
+    return result
+}
+
+async function loadBuildingsFromCache(cacheKey, signal) {
+    if (!cacheKey) return null
+    try {
+        const res = await fetch(CACHE_BUILDINGS_ENDPOINT, {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({key: cacheKey}),
+            signal
+        })
+        if (!res.ok) return null
+        const json = await res.json().catch(() => ({}))
+        const data = json?.data
+        if (!json?.hit || !data) return null
+        if (!Array.isArray(data.buildings) || !Array.isArray(data.areas)) return null
+        return data
+    } catch (err) {
+        if (err?.name === "AbortError") throw err
+        return null
+    }
+}
+
+async function saveBuildingsToCache(cacheKey, data, signal) {
+    if (!cacheKey || !data) return
+    try {
+        await fetch(CACHE_BUILDINGS_STORE_ENDPOINT, {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({key: cacheKey, data}),
+            signal
+        })
+    } catch {
+        return
+    }
+}
+
+export async function loadDensityFromCache(cacheKey, signal) {
+    if (!cacheKey) return null
+    try {
+        const res = await fetch(CACHE_DENSITY_ENDPOINT, {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({key: cacheKey}),
+            signal
+        })
+        if (!res.ok) return null
+        const json = await res.json().catch(() => ({}))
+        const data = json?.data
+        if (!json?.hit || !data) return null
+        if (!Array.isArray(data.cells)) return null
+        return data
+    } catch (err) {
+        if (err?.name === "AbortError") throw err
+        return null
+    }
+}
+
+export async function saveDensityToCache(cacheKey, data, signal) {
+    if (!cacheKey || !data) return
+    try {
+        await fetch(CACHE_DENSITY_STORE_ENDPOINT, {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({key: cacheKey, data}),
+            signal
+        })
+    } catch {
+        return
+    }
 }
 
 export async function loadBuildingHeightsFromCache(ids, signal, onBatch) {
@@ -113,8 +195,8 @@ export async function resetBuildingHeightsCache(signal) {
     return await res.json().catch(() => ({}))
 }
 
-export async function fetchBuildingHeightsCacheStats(signal) {
-    const res = await fetch(CACHE_BUILDING_HEIGHTS_STATS_ENDPOINT, {
+export async function fetchCacheStats(signal) {
+    const res = await fetch(CACHE_STATS_ENDPOINT, {
         method: "GET",
         headers: {"Content-Type": "application/json"},
         signal

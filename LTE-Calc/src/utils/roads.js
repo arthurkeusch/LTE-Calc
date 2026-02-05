@@ -1,8 +1,17 @@
+import {areaCacheKey} from "./cacheKeys"
+
 const OVERPASS_PRIMARY = "https://overpass-api.de/api/interpreter"
 const OVERPASS_RETRIES = 3
 const OVERPASS_RETRY_DELAY_MS = 500
+const BACKEND_BASE_URL = "https://lte-calc.arthur-keusch.fr:3000"
+const CACHE_ROADS_ENDPOINT = `${BACKEND_BASE_URL}/cache/roads`
+const CACHE_ROADS_STORE_ENDPOINT = `${BACKEND_BASE_URL}/cache/roads/store`
 
 export async function fetchRoadSpeedsInSquare(lat, lng, sideKm, signal) {
+    const cacheKey = areaCacheKey(lat, lng, sideKm)
+    const cached = await loadRoadsFromCache(cacheKey, signal)
+    if (cached) return cached
+
     const {south, west, north, east} = computeSquareBounds(lat, lng, sideKm)
 
     const query = `[out:json][timeout:25];
@@ -34,7 +43,44 @@ out tags geom;`
         }
     }
 
-    return {speeds, roads}
+    const result = {speeds, roads}
+    await saveRoadsToCache(cacheKey, result, signal)
+    return result
+}
+
+async function loadRoadsFromCache(cacheKey, signal) {
+    if (!cacheKey) return null
+    try {
+        const res = await fetch(CACHE_ROADS_ENDPOINT, {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({key: cacheKey}),
+            signal
+        })
+        if (!res.ok) return null
+        const json = await res.json().catch(() => ({}))
+        const data = json?.data
+        if (!json?.hit || !data) return null
+        if (!Array.isArray(data.roads) || !Array.isArray(data.speeds)) return null
+        return data
+    } catch (err) {
+        if (err?.name === "AbortError") throw err
+        return null
+    }
+}
+
+async function saveRoadsToCache(cacheKey, data, signal) {
+    if (!cacheKey || !data) return
+    try {
+        await fetch(CACHE_ROADS_STORE_ENDPOINT, {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({key: cacheKey, data}),
+            signal
+        })
+    } catch {
+        return
+    }
 }
 
 function computeSquareBounds(lat, lng, sideKm) {
