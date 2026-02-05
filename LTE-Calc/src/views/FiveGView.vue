@@ -161,7 +161,6 @@ function computeDensityGrid(buildings, center, sideKm) {
   const cellSize = 100
   const cellsPerSide = Math.max(1, Math.ceil(sideMeters / cellSize))
   const totalCells = cellsPerSide * cellsPerSide
-  const sums = new Array(totalCells).fill(0)
   const counts = new Array(totalCells).fill(0)
   const half = sideMeters / 2
   const lat0 = center.lat
@@ -179,18 +178,11 @@ function computeDensityGrid(buildings, center, sideKm) {
     const iy = Math.floor((dy + half) / cellSize)
     if (ix < 0 || iy < 0 || ix >= cellsPerSide || iy >= cellsPerSide) continue
     const idx = iy * cellsPerSide + ix
-    sums[idx] += b.area
     counts[idx] += 1
   }
 
-  const cellArea = cellSize * cellSize
-  const coverages = sums.map(a => Math.max(0, Math.min(1, a / cellArea)))
   const maxCount = Math.max(1, ...counts)
-  const scores = coverages.map((c, i) => {
-    const countNorm = counts[i] / maxCount
-    const countBoost = Math.sqrt(Math.max(0, countNorm))
-    return Math.max(0, Math.min(1, c * 0.4 + countBoost * 0.6))
-  })
+  const scores = counts.map(c => Math.max(0, Math.min(1, c / maxCount)))
   const stats = computeDensityStats(scores)
   const dLatPerM = (1 / R) * (180 / Math.PI)
   const dLngPerM = dLatPerM / cosLat
@@ -208,7 +200,6 @@ function computeDensityGrid(buildings, center, sideKm) {
       const idx = iy * cellsPerSide + ix
       cells.push({
         score: scores[idx],
-        coverage: coverages[idx],
         count: counts[idx],
         bounds: [[south, west], [north, east]]
       })

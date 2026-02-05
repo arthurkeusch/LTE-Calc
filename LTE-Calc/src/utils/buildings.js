@@ -329,6 +329,7 @@ export async function applyAltimetryHeights(buildings, signal, onProgress) {
     if (!Array.isArray(buildings) || buildings.length === 0) return buildings || []
     const missingIdx = []
     const points = []
+    const firstPoints = new Map()
     for (let i = 0; i < buildings.length; i++) {
         const b = buildings[i]
         if (Number.isFinite(b.height)) continue
@@ -336,6 +337,7 @@ export async function applyAltimetryHeights(buildings, signal, onProgress) {
         if (!c) continue
         missingIdx.push(i)
         points.push(c)
+        firstPoints.set(i, c)
     }
 
     if (!points.length) return buildings
@@ -360,6 +362,47 @@ export async function applyAltimetryHeights(buildings, signal, onProgress) {
         const h = heights[i]
         if (Number.isFinite(h) && h > 0) {
             next[idx] = {...next[idx], height: h}
+        }
+    }
+
+    const retryPoints = []
+    const retryMap = []
+    for (let i = 0; i < missingIdx.length; i++) {
+        const idx = missingIdx[i]
+        const b = next[idx]
+        const current = Number(b?.height)
+        const area = Number.isFinite(b?.area) ? b.area : polygonAreaMeters2(b?.geometry)
+        const maxPoints = Math.max(1, Math.floor(area / 10))
+        if (!Number.isFinite(area) || maxPoints <= 1) continue
+        if (Number.isFinite(current) && current >= 3) continue
+        const first = firstPoints.get(idx)
+        const candidates = buildInteriorPoints(b?.geometry, maxPoints, first)
+        if (candidates.length <= 1) continue
+        for (let c = 1; c < candidates.length; c++) {
+            retryIdx.push(idx)
+            retryPoints.push(candidates[c])
+            retryMap.push(idx)
+        }
+    }
+
+    if (retryPoints.length) {
+        const extraHeights = await fetchAltimetryHeights(retryPoints, signal)
+        const best = new Map()
+        for (let i = 0; i < extraHeights.length; i++) {
+            const idx = retryMap[i]
+            const h = extraHeights[i]
+            if (!Number.isFinite(h) || h <= 0) continue
+            const prev = best.get(idx)
+            if (!Number.isFinite(prev) || h > prev) best.set(idx, h)
+        }
+        for (const [idx, h] of best.entries()) {
+            const current = Number(next[idx]?.height)
+            if (!Number.isFinite(current) || h > current) {
+                next[idx] = {...next[idx], height: h}
+            }
+        }
+        if (typeof onProgress === "function") {
+            onProgress(next.slice(), 1)
         }
     }
     return next
@@ -569,6 +612,54 @@ function pickPointInsidePolygon(geometry) {
         if (pointInPolygon(mid, pts)) return mid
     }
     return null
+}
+
+function buildInteriorPoints(geometry, maxPoints, first) {
+    const pts = Array.isArray(geometry) ? geometry : []
+    if (pts.length < 3) return []
+    const points = []
+    const firstPoint = first || pickPointInsidePolygon(pts)
+    if (firstPoint) points.push(firstPoint)
+    if (maxPoints <= 1) return points
+
+    const bounds = polygonBounds(pts)
+    if (!bounds) return points
+    const {minLat, maxLat, minLng, maxLng} = bounds
+    const spanLat = maxLat - minLat
+    const spanLng = maxLng - minLng
+    const n = Math.max(2, Math.ceil(Math.sqrt(maxPoints * 1.5)))
+    for (let iy = 0; iy < n; iy++) {
+        for (let ix = 0; ix < n; ix++) {
+            if (points.length >= maxPoints) return points
+            const lat = minLat + ((iy + 0.5) / n) * spanLat
+            const lng = minLng + ((ix + 0.5) / n) * spanLng
+            const p = {lat, lng}
+            if (pointInPolygon(p, pts)) points.push(p)
+        }
+    }
+    if (points.length >= maxPoints) return points
+    for (let i = 0; i < pts.length && points.length < maxPoints; i++) {
+        const a = pts[i]
+        const b = pts[(i + 1) % pts.length]
+        const mid = {lat: (a[0] + b[0]) / 2, lng: (a[1] + b[1]) / 2}
+        if (pointInPolygon(mid, pts)) points.push(mid)
+    }
+    return points
+}
+
+function polygonBounds(pts) {
+    if (!pts.length) return null
+    let minLat = pts[0][0]
+    let maxLat = pts[0][0]
+    let minLng = pts[0][1]
+    let maxLng = pts[0][1]
+    for (const p of pts) {
+        if (p[0] < minLat) minLat = p[0]
+        if (p[0] > maxLat) maxLat = p[0]
+        if (p[1] < minLng) minLng = p[1]
+        if (p[1] > maxLng) maxLng = p[1]
+    }
+    return {minLat, maxLat, minLng, maxLng}
 }
 
 function averageLatLng(pts) {
