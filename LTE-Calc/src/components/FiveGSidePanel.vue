@@ -38,6 +38,30 @@
         <div class="divider"></div>
 
         <div class="section">
+          <div class="sTitle">Simulation mode</div>
+          <div class="modeToggle">
+            <button
+                type="button"
+                class="modeBtn"
+                :class="{active: simulationMode === 'basic'}"
+                @click="emit('update:simulationMode', 'basic')"
+            >
+              Basic
+            </button>
+            <button
+                type="button"
+                class="modeBtn"
+                :class="{active: simulationMode === 'advanced'}"
+                @click="emit('update:simulationMode', 'advanced')"
+            >
+              Advanced
+            </button>
+          </div>
+        </div>
+
+        <div class="divider"></div>
+
+        <div class="section">
           <div class="sTitle">Road speed distribution</div>
 
           <div v-if="!selected" class="muted">
@@ -392,7 +416,16 @@
                 <div class="mSmall hoverHelp" :title="nrReasonCp">Cyclic prefix {{ nrCp }}</div>
               </div>
             </div>
-            <div v-else class="muted">No configuration available for this area.</div>
+            <div v-if="simulationMode === 'advanced' && antennaSite" class="resultDetails">
+              <div class="mSmall hoverHelp" :title="antennaHelpPosition">Antenna lat {{ antennaLat }}</div>
+              <div class="mSmall hoverHelp" :title="antennaHelpPosition">Antenna lng {{ antennaLng }}</div>
+              <div class="mSmall hoverHelp" :title="antennaHelpHeight">Height {{ antennaHeight }} m</div>
+              <div class="mSmall hoverHelp" :title="antennaHelpGain">Gain {{ antennaGain }} dBi</div>
+            </div>
+            <div v-if="simulationMode === 'advanced' && antennaSite" class="resultHint">
+              Position maximizes average and worst-case signal. Height and gain are bounded for realistic sites.
+            </div>
+            <div v-if="!nrConfig" class="muted">No configuration available for this area.</div>
           </div>
       </div>
     </div>
@@ -407,6 +440,7 @@ import HistogramChart from "@/components/HistogramChart.vue"
 const props = defineProps({
   selected: {type: Object, default: null},
   zoneSideKm: {type: Number, required: true},
+  simulationMode: {type: String, default: "basic"},
   speedStats: {type: Object, default: null},
   speedLoading: {type: Boolean, default: false},
   speedError: {type: String, default: null},
@@ -425,6 +459,7 @@ const props = defineProps({
   reliefLoading: {type: Boolean, default: false},
   reliefError: {type: String, default: null},
   nrConfig: {type: Object, default: null},
+  antennaSite: {type: Object, default: null},
   anyLoading: {type: Boolean, default: false},
   loadingProgress: {type: Number, default: 0},
   cacheResetting: {type: Boolean, default: false},
@@ -444,7 +479,7 @@ const props = defineProps({
   cacheStatsLoading: {type: Boolean, default: false}
 })
 
-const emit = defineEmits(["update:zoneSideKm", "reset-cache"])
+const emit = defineEmits(["update:zoneSideKm", "update:simulationMode", "reset-cache"])
 
 const sliderValue = ref(Number(props.zoneSideKm))
 watch(
@@ -526,6 +561,13 @@ const nrCp = computed(() => {
 const nrReasonFrequency = computed(() => props.nrConfig?.reasonFrequency || "")
 const nrReasonScs = computed(() => props.nrConfig?.reasonSubcarrierSpacing || "")
 const nrReasonCp = computed(() => props.nrConfig?.reasonCyclicPrefix || "")
+const antennaHelpPosition = computed(() => "Best site to maximize average and worst-case signal.")
+const antennaHelpHeight = computed(() => "Estimated mast height based on clutter and zone size.")
+const antennaHelpGain = computed(() => "Gain picked to reach coverage threshold, bounded to realistic values.")
+const antennaLat = computed(() => formatCoord(props.antennaSite?.lat))
+const antennaLng = computed(() => formatCoord(props.antennaSite?.lng))
+const antennaHeight = computed(() => formatNumber(props.antennaSite?.heightM, 1))
+const antennaGain = computed(() => formatNumber(props.antennaSite?.gainDb, 1))
 
 function formatRelief(value, digits) {
   const n = Number(value)
@@ -538,6 +580,12 @@ function formatNumber(value, digits = 0) {
   const n = Number(value)
   if (!Number.isFinite(n)) return "-"
   return n.toFixed(digits)
+}
+
+function formatCoord(value) {
+  const n = Number(value)
+  if (!Number.isFinite(n)) return "-"
+  return n.toFixed(5)
 }
 
 function xFromSpeed(value) {
@@ -1093,6 +1141,29 @@ function canyonClassLabel(value) {
   opacity: 0.65;
 }
 
+.modeToggle {
+  display: flex;
+  gap: 8px;
+}
+
+.modeBtn {
+  flex: 1;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(0, 0, 0, 0.2);
+  color: rgba(255, 255, 255, 0.82);
+  border-radius: 10px;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.modeBtn.active {
+  background: rgba(88, 101, 242, 0.28);
+  border-color: rgba(88, 101, 242, 0.6);
+  color: rgba(255, 255, 255, 0.95);
+}
+
 .muted {
   font-size: 12px;
   opacity: 0.7;
@@ -1230,6 +1301,16 @@ function canyonClassLabel(value) {
   display: grid;
   gap: 2px;
   text-align: right;
+}
+
+.resultDetails {
+  display: grid;
+  gap: 2px;
+}
+
+.resultHint {
+  font-size: 11px;
+  opacity: 0.7;
 }
 
 .hoverHelp {

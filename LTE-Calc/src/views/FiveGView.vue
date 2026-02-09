@@ -3,6 +3,7 @@
     <FiveGSidePanel
         :selected="selected"
         v-model:zoneSideKm="zoneSideKm"
+        v-model:simulationMode="simulationMode"
         :speedStats="speedStats"
         :speedLoading="speedLoading"
         :speedError="speedError"
@@ -21,6 +22,7 @@
         :reliefLoading="reliefLoading"
         :reliefError="reliefError"
         :nrConfig="nrConfig"
+        :antennaSite="antennaSite"
         :anyLoading="anyLoading"
         :loadingProgress="loadingProgress"
         :cacheResetting="cacheResetting"
@@ -38,13 +40,17 @@
         v-model:showDensityGrid="showDensityGrid"
         v-model:showVegetation="showVegetation"
         v-model:showRelief="showRelief"
+        v-model:showSignal="showSignal"
         :zoneSideKm="zoneSideKm"
+        :simulationMode="simulationMode"
         :roads="roadsData"
         :canyonRoads="canyonRoads"
         :buildings="buildingsData"
         :densityGrid="densityGrid"
         :vegetationCells="vegetationCells"
         :reliefCells="reliefCells"
+        :signalGrid="signalGrid"
+        :antennaSite="antennaSite"
     />
   </div>
 </template>
@@ -75,6 +81,7 @@ import {fetchReliefInSquare} from "@/utils/relief"
 import {areaCacheKey} from "@/utils/cacheKeys"
 import {computeSquareBounds} from "@/utils/shared"
 import {computeNrConfig} from "@/utils/nrConfig"
+import {computeSignalSimulation} from "@/utils/advancedSimulation"
 
 const zoneSideKm = ref(1.0)
 const selected = ref(null)
@@ -85,6 +92,9 @@ const showBuildingHeights = ref(true)
 const showDensityGrid = ref(false)
 const showVegetation = ref(false)
 const showRelief = ref(false)
+const simulationMode = ref("basic")
+const showSignal = ref(false)
+const advancedRunKey = ref(0)
 
 const speedStats = ref(null)
 const roadsData = ref([])
@@ -110,6 +120,8 @@ const reliefStats = ref(null)
 const reliefLoading = ref(false)
 const reliefError = ref(null)
 const reliefCells = ref([])
+const signalGrid = ref([])
+const antennaSite = ref(null)
 const speedProgress = ref(0)
 const buildingProgress = ref(0)
 const heightProgress = ref(0)
@@ -199,6 +211,7 @@ let lastDensityKey = null
 let lastDensityCount = 0
 let cacheStatsTimer = null
 let canyonTimer = null
+let advancedTimer = null
 
 function scheduleCacheStatsRefresh() {
   if (cacheStatsTimer) clearTimeout(cacheStatsTimer)
@@ -531,6 +544,10 @@ function scheduleSpeedRefresh() {
 
 watch([selected, zoneSideKm], scheduleSpeedRefresh, {deep: true})
 
+watch(simulationMode, () => {
+  advancedRunKey.value += 1
+})
+
 watch([roadsData, buildingsData, selected], () => {
   if (!selected.value) {
     canyonStats.value = null
@@ -590,6 +607,48 @@ watch([buildingsData, selected, zoneSideKm], async () => {
   densityGrid.value = grid.cells
   saveDensityToCache(grid.toStore, aborter?.signal)
   scheduleCacheStatsRefresh()
+}, {deep: true})
+
+watch([
+  selected,
+  zoneSideKm,
+  simulationMode,
+  advancedRunKey,
+  nrConfig,
+  densityGrid,
+  densityStats,
+  vegetationCells,
+  vegetationStats,
+  reliefCells,
+  reliefStats,
+  canyonStats,
+  buildingHeightStats,
+  anyLoading
+], () => {
+  if (advancedTimer) clearTimeout(advancedTimer)
+  if (!selected.value) {
+    signalGrid.value = []
+    antennaSite.value = null
+    return
+  }
+  advancedTimer = setTimeout(() => {
+    const result = computeSignalSimulation({
+      mode: simulationMode.value,
+      center: selected.value,
+      zoneSideKm: zoneSideKm.value,
+      nrConfig: nrConfig.value,
+      densityGrid: densityGrid.value,
+      densityStats: densityStats.value,
+      vegetationCells: vegetationCells.value,
+      vegetationStats: vegetationStats.value,
+      reliefCells: reliefCells.value,
+      reliefStats: reliefStats.value,
+      canyonStats: canyonStats.value,
+      buildingHeightStats: buildingHeightStats.value
+    })
+    signalGrid.value = Array.isArray(result?.signalGrid) ? result.signalGrid : []
+    antennaSite.value = simulationMode.value === "advanced" ? (result?.antenna || null) : null
+  }, 180)
 }, {deep: true})
 </script>
 

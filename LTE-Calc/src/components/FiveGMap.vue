@@ -1,8 +1,8 @@
-<template>
+﻿<template>
   <section class="mapWrap">
     <div class="map" ref="mapEl"></div>
     <div
-        v-if="roads.length || canyonRoads.length || buildings.length || densityGrid.length || vegetationCells.length || reliefCells.length"
+        v-if="roads.length || canyonRoads.length || buildings.length || densityGrid.length || vegetationCells.length || reliefCells.length || signalGrid.length"
         class="legend">
       <div class="legendTitle">Road speed colors</div>
       <label class="legendToggle">
@@ -125,7 +125,6 @@
           <span>{{ Math.round(reliefRange.max) }} m</span>
         </div>
       </div>
-      <div class="legendDivider"></div>
       <div class="legendTitle">Density grid</div>
       <label class="legendToggle">
         <input
@@ -142,6 +141,24 @@
         <div class="legendRange">
           <span>{{ Math.round(densityRange.min * 100) }}%</span>
           <span>{{ Math.round(densityRange.max * 100) }}%</span>
+        </div>
+      </div>
+      <div class="legendDivider"></div>
+      <div class="legendTitle">Signal strength</div>
+      <label class="legendToggle">
+        <input
+            class="legendCheckbox"
+            type="checkbox"
+            :checked="showSignal"
+            @change="$emit('update:showSignal', $event.target.checked)"
+        />
+        <span>Show signal map</span>
+      </label>
+      <div v-if="showSignal && signalRange" class="legendScale">
+        <div class="legendBar legendBarSignal"></div>
+        <div class="legendRange">
+          <span>{{ Math.round(signalRange.min) }} dBm</span>
+          <span>{{ Math.round(signalRange.max) }} dBm</span>
         </div>
       </div>
     </div>
@@ -162,6 +179,10 @@ const props = defineProps({
   zoneSideKm: {
     type: Number,
     required: true
+  },
+  simulationMode: {
+    type: String,
+    default: "basic"
   },
   roads: {
     type: Array,
@@ -203,6 +224,10 @@ const props = defineProps({
     type: Boolean,
     default: false
   },
+  showSignal: {
+    type: Boolean,
+    default: false
+  },
   densityGrid: {
     type: Array,
     default: () => []
@@ -214,6 +239,14 @@ const props = defineProps({
   reliefCells: {
     type: Array,
     default: () => []
+  },
+  signalGrid: {
+    type: Array,
+    default: () => []
+  },
+  antennaSite: {
+    type: Object,
+    default: null
   }
 })
 
@@ -225,7 +258,8 @@ const emit = defineEmits([
   'update:showBuildingHeights',
   'update:showDensityGrid',
   'update:showVegetation',
-  'update:showRelief'
+  'update:showRelief',
+  'update:showSignal'
 ])
 
 const mapEl = ref(null)
@@ -243,7 +277,11 @@ const {
   showVegetation,
   vegetationCells,
   showRelief,
-  reliefCells
+  reliefCells,
+  showSignal,
+  simulationMode,
+  signalGrid,
+  antennaSite
 } = toRefs(props)
 const canToggleRoads = computed(() => roads.value.length > 0)
 const canToggleCanyons = computed(() => canyonRoads.value.length > 0)
@@ -274,6 +312,18 @@ const reliefRange = computed(() => {
   if (!vals.length) return null
   return {min: Math.min(...vals), max: Math.max(...vals)}
 })
+const signalRange = computed(() => {
+  const vals = (signalGrid.value || []).map(c => c.signal).filter(n => Number.isFinite(n))
+  if (!vals.length) return null
+  const min = Math.max(-120, Math.min(...vals))
+  const max = Math.min(-60, Math.max(...vals))
+  if (max <= min) return {min: -120, max: -60}
+  return {min, max}
+})
+const signalHoverActive = computed(() => (
+    showSignal.value &&
+    signalGrid.value.length > 0
+))
 const canToggleBuildingHeights = computed(() => showBuildings.value && !!heightRange.value)
 
 let map = null
@@ -285,6 +335,11 @@ let buildingLayers = L.layerGroup()
 let vegetationLayer = null
 let reliefLayer = null
 let densityLayer = null
+let signalLayer = null
+let antennaMarker = null
+let antennaHalo = null
+let signalTooltip = null
+let signalHoverIndex = {zoom: null, index: new Map(), size: L.point(256, 256)}
 
 function boundsFromCenter(lat, lng, halfSideM) {
   const latRad = (lat * Math.PI) / 180
@@ -427,8 +482,94 @@ function setLayerVisibility(layer, visible) {
   if (!map || !layer) return
   if (visible) {
     if (!map.hasLayer(layer)) layer.addTo(map)
+    if (typeof layer.redraw === "function") layer.redraw()
   } else if (map.hasLayer(layer)) {
     map.removeLayer(layer)
+  }
+}
+
+function resetSignalHoverIndex() {
+  signalHoverIndex = {zoom: null, index: new Map(), size: signalHoverIndex.size}
+}
+
+function rebuildSignalHoverIndex() {
+  if (!map || !signalHoverActive.value) {
+    resetSignalHoverIndex()
+    return
+  }
+  const zoom = map.getZoom()
+  signalHoverIndex = {
+    zoom,
+    index: buildTileIndex(
+        signalGrid.value,
+        zoom,
+        map,
+        signalHoverIndex.size,
+        (cell) => Number.isFinite(cell?.signal)
+    ),
+    size: signalHoverIndex.size
+  }
+}
+
+function findSignalCell(latlng) {
+  if (!map || !signalHoverActive.value) return null
+  const zoom = map.getZoom()
+  if (signalHoverIndex.zoom !== zoom) rebuildSignalHoverIndex()
+  const index = signalHoverIndex.index
+  if (!index || index.size === 0) return null
+  const size = signalHoverIndex.size
+  const p = map.project(latlng, zoom)
+  const tileX = Math.floor(p.x / size.x)
+  const tileY = Math.floor(p.y / size.y)
+  const key = `${tileX}:${tileY}`
+  const entries = index.get(key)
+  if (!entries || entries.length === 0) return null
+  for (const entry of entries) {
+    if (p.x >= entry.minX && p.x <= entry.maxX && p.y >= entry.minY && p.y <= entry.maxY) {
+      return entry.cell
+    }
+  }
+  return null
+}
+
+function clearSignalTooltip() {
+  if (!map || !signalTooltip) return
+  map.removeLayer(signalTooltip)
+  signalTooltip = null
+}
+
+function updateSignalTooltip(latlng) {
+  if (!map || !signalHoverActive.value) {
+    clearSignalTooltip()
+    return
+  }
+  const cell = findSignalCell(latlng)
+  const signal = Number(cell?.signal)
+  if (!Number.isFinite(signal)) {
+    clearSignalTooltip()
+    return
+  }
+  const content = `Signal: ${signal.toFixed(1)} dBm`
+  if (!signalTooltip) {
+    signalTooltip = L.tooltip({
+      direction: "top",
+      opacity: 0.92,
+      offset: [0, -8],
+      className: "signalTooltip"
+    }).addTo(map)
+  }
+  signalTooltip.setLatLng(latlng)
+  signalTooltip.setContent(content)
+}
+
+function updateSignalHoverState() {
+  if (!map) return
+  if (signalHoverActive.value) {
+    map.closeTooltip()
+    rebuildSignalHoverIndex()
+  } else {
+    clearSignalTooltip()
+    resetSignalHoverIndex()
   }
 }
 
@@ -471,10 +612,24 @@ function getDensityStyle(cell, range) {
   }
 }
 
+function getSignalStyle(cell, range) {
+  const signal = Number(cell?.signal)
+  if (!Number.isFinite(signal)) return null
+  const r = range || {min: -120, max: -60}
+  return {
+    fill: signalToColor(signal, r.min, r.max),
+    fillOpacity: 0.55,
+    stroke: "rgba(255, 255, 255, 0.1)",
+    strokeOpacity: 0.4,
+    strokeWidth: 0.6
+  }
+}
+
 function updateLayers(fit = true) {
   if (!map || !props.selected) return
   const {lat, lng} = props.selected
   const b = boundsFromCenter(lat, lng, zoneHalfSideM.value)
+  const interactive = !signalHoverActive.value
 
   if (!centerDot) {
     centerDot = L.circleMarker([lat, lng], {
@@ -508,13 +663,16 @@ function updateLayers(fit = true) {
         color: getSpeedColor(road.speed),
         weight: 5,
         opacity: 0.7,
-        lineJoin: 'round'
+        lineJoin: 'round',
+        interactive
       }).addTo(roadLayers)
-      line.bindTooltip(`Speed: ${formatSpeed(road.speed)} km/h`, {
-        direction: "top",
-        sticky: true,
-        opacity: 0.9
-      })
+      if (interactive) {
+        line.bindTooltip(`Speed: ${formatSpeed(road.speed)} km/h`, {
+          direction: "top",
+          sticky: true,
+          opacity: 0.9
+        })
+      }
     })
   }
 
@@ -528,19 +686,22 @@ function updateLayers(fit = true) {
         color,
         weight: 6,
         opacity: 0.75,
-        lineJoin: "round"
+        lineJoin: "round",
+        interactive
       }).addTo(canyonLayers)
-      const h = formatNumber(road.canyonHeight, 1)
-      const w = formatNumber(road.canyonWidth, 1)
-      const idx = formatNumber(road.canyonIndex, 2)
-      line.bindTooltip(
-          `Canyon index: ${idx}<br/>Class: ${canyonLabel(cls)}<br/>H: ${h} m<br/>W: ${w} m`,
-          {
-            direction: "top",
-            sticky: true,
-            opacity: 0.9
-          }
-      )
+      if (interactive) {
+        const h = formatNumber(road.canyonHeight, 1)
+        const w = formatNumber(road.canyonWidth, 1)
+        const idx = formatNumber(road.canyonIndex, 2)
+        line.bindTooltip(
+            `Canyon index: ${idx}<br/>Class: ${canyonLabel(cls)}<br/>H: ${h} m<br/>W: ${w} m`,
+            {
+              direction: "top",
+              sticky: true,
+              opacity: 0.9
+            }
+        )
+      }
     })
   }
 
@@ -556,16 +717,19 @@ function updateLayers(fit = true) {
         weight: 1,
         opacity: 0.8,
         fillColor: color,
-        fillOpacity: 0.35
+        fillOpacity: 0.35,
+        interactive
       }).addTo(buildingLayers)
-      poly.bindTooltip(
-          `Area: ${formatArea(building.area)} m²<br/>Height: ${formatHeight(building.height)} m`,
-          {
-            direction: "top",
-            sticky: true,
-            opacity: 0.9
-          }
-      )
+        if (interactive) {
+          poly.bindTooltip(
+              `Area: ${formatArea(building.area)} mÂ²<br/>Height: ${formatHeight(building.height)} m`,
+              {
+                direction: "top",
+                sticky: true,
+                opacity: 0.9
+              }
+          )
+        }
     })
   }
 
@@ -573,17 +737,17 @@ function updateLayers(fit = true) {
 }
 
 function formatArea(value) {
-  if (!Number.isFinite(value)) return "—"
+  if (!Number.isFinite(value)) return "â€”"
   return Math.round(value).toString()
 }
 
 function formatHeight(value) {
-  if (!Number.isFinite(value)) return "—"
+  if (!Number.isFinite(value)) return "â€”"
   return value.toFixed(1)
 }
 
 function formatSpeed(value) {
-  if (!Number.isFinite(value)) return "—"
+  if (!Number.isFinite(value)) return "â€”"
   return value.toFixed(0)
 }
 
@@ -629,6 +793,93 @@ function reliefToColor(value, min, max) {
   return `hsl(${hue}, 70%, 50%)`
 }
 
+function signalToColor(value, min, max) {
+  if (!Number.isFinite(value) || !Number.isFinite(min) || !Number.isFinite(max) || max <= min) {
+    return "rgba(200, 200, 200, 0.2)"
+  }
+  const t = Math.max(0, Math.min(1, (value - min) / (max - min)))
+  const hue = 0 + t * 120
+  return `hsl(${hue}, 80%, 52%)`
+}
+
+function updateAntennaMarker() {
+  if (!map) return
+  const site = antennaSite.value
+  const visible = simulationMode.value === "advanced" &&
+      site &&
+      Number.isFinite(site.lat) &&
+      Number.isFinite(site.lng)
+
+  if (!visible) {
+    if (antennaMarker && map.hasLayer(antennaMarker)) {
+      map.removeLayer(antennaMarker)
+    }
+    if (antennaHalo && map.hasLayer(antennaHalo)) {
+      map.removeLayer(antennaHalo)
+    }
+    antennaMarker = null
+    antennaHalo = null
+    return
+  }
+
+  const latlng = [site.lat, site.lng]
+  if (!antennaMarker) {
+    antennaMarker = L.circleMarker(latlng, {
+      radius: 12,
+      weight: 3,
+      opacity: 1,
+      color: "#ffffff",
+      fillColor: "#00d1ff",
+      fillOpacity: 0.95,
+      pane: "markerPane"
+    }).addTo(map)
+  } else {
+    antennaMarker.setLatLng(latlng)
+  }
+  if (!antennaHalo) {
+    antennaHalo = L.circle(latlng, {
+      radius: 120,
+      color: "#00d1ff",
+      weight: 2,
+      opacity: 0.7,
+      fillColor: "#00d1ff",
+      fillOpacity: 0.1,
+      pane: "markerPane"
+    }).addTo(map)
+  } else {
+    antennaHalo.setLatLng(latlng)
+  }
+
+  const height = formatNumber(site.heightM, 1)
+  const gain = formatNumber(site.gainDb, 1)
+  const eirp = formatNumber(site.eirpDbm, 1)
+  const tooltip = `Antenna site<br/>Height: ${height} m<br/>Gain: ${gain} dBi<br/>EIRP: ${eirp} dBm`
+  if (antennaMarker.getTooltip()) {
+    antennaMarker.setTooltipContent(tooltip)
+  } else {
+    antennaMarker.bindTooltip(tooltip, {
+      direction: "top",
+      sticky: true,
+      opacity: 0.9
+    })
+  }
+}
+
+function onMapMove(e) {
+  if (!signalHoverActive.value) return
+  updateSignalTooltip(e.latlng)
+}
+
+function onMapMouseOut() {
+  if (!signalHoverActive.value) return
+  clearSignalTooltip()
+}
+
+function onMapZoomEnd() {
+  if (!signalHoverActive.value) return
+  rebuildSignalHoverIndex()
+}
+
 function onMapClick(e) {
   emit('update:selected', {lat: e.latlng.lat, lng: e.latlng.lng})
 }
@@ -659,6 +910,11 @@ onMounted(() => {
     filterCell: (cell) => Number.isFinite(cell?.score),
     zIndex: 350
   })
+  signalLayer = createCellGridLayer({
+    getStyle: getSignalStyle,
+    filterCell: (cell) => Number.isFinite(cell?.signal),
+    zIndex: 420
+  })
 
   reliefLayer.setCells(props.reliefCells)
   reliefLayer.setRange(reliefRange.value)
@@ -666,25 +922,41 @@ onMounted(() => {
   vegetationLayer.setRange(vegetationRange.value)
   densityLayer.setCells(props.densityGrid)
   densityLayer.setRange(densityRange.value)
+  signalLayer.setCells(props.signalGrid)
+  signalLayer.setRange(signalRange.value)
 
   setLayerVisibility(reliefLayer, props.showRelief)
   setLayerVisibility(vegetationLayer, props.showVegetation)
   setLayerVisibility(densityLayer, props.showDensityGrid)
+  setLayerVisibility(signalLayer, props.showSignal && props.signalGrid.length > 0)
 
   roadLayers.addTo(map)
   canyonLayers.addTo(map)
   buildingLayers.addTo(map)
 
   map.on("click", onMapClick)
+  map.on("mousemove", onMapMove)
+  map.on("mouseout", onMapMouseOut)
+  map.on("zoomend", onMapZoomEnd)
 
   if (props.selected) {
     updateLayers(true)
   }
+
+  updateAntennaMarker()
+  updateSignalHoverState()
 })
 
 onBeforeUnmount(() => {
   if (!map) return
   map.off("click", onMapClick)
+  map.off("mousemove", onMapMove)
+  map.off("mouseout", onMapMouseOut)
+  map.off("zoomend", onMapZoomEnd)
+  if (antennaMarker && map.hasLayer(antennaMarker)) map.removeLayer(antennaMarker)
+  if (antennaHalo && map.hasLayer(antennaHalo)) map.removeLayer(antennaHalo)
+  if (signalLayer && map.hasLayer(signalLayer)) map.removeLayer(signalLayer)
+  clearSignalTooltip()
   map.remove()
   map = null
   centerDot = null
@@ -692,6 +964,10 @@ onBeforeUnmount(() => {
   vegetationLayer = null
   reliefLayer = null
   densityLayer = null
+  signalLayer = null
+  antennaMarker = null
+  antennaHalo = null
+  signalTooltip = null
 })
 
 watch(() => props.zoneSideKm, () => {
@@ -766,6 +1042,36 @@ watch(reliefRange, (range) => {
 
 watch(showRelief, (show) => {
   setLayerVisibility(reliefLayer, show)
+})
+
+watch(signalGrid, (cells) => {
+  if (signalLayer) signalLayer.setCells(cells)
+  updateSignalHoverState()
+  const visible = showSignal.value &&
+      Array.isArray(cells) &&
+      cells.length > 0
+  setLayerVisibility(signalLayer, visible)
+  if (showSignal.value) {
+    updateLayers(false)
+  }
+}, {deep: true})
+
+watch(signalRange, (range) => {
+  if (signalLayer) signalLayer.setRange(range)
+})
+
+watch([showSignal, signalGrid], ([show, cells]) => {
+  const visible = show && Array.isArray(cells) && cells.length > 0
+  setLayerVisibility(signalLayer, visible)
+})
+
+watch([simulationMode, showSignal, antennaSite], () => {
+  updateAntennaMarker()
+}, {deep: true})
+
+watch([simulationMode, showSignal], () => {
+  updateLayers(false)
+  updateSignalHoverState()
 })
 </script>
 
@@ -844,6 +1150,10 @@ watch(showRelief, (show) => {
 
 .legendBarRelief {
   background: linear-gradient(90deg, hsl(210, 70%, 50%), hsl(40, 80%, 45%));
+}
+
+.legendBarSignal {
+  background: linear-gradient(90deg, #c0392b, #f1c40f, #2ecc71);
 }
 
 .legendScaleCanyons {
@@ -947,9 +1257,22 @@ watch(showRelief, (show) => {
   text-align: center;
 }
 
+:global(.signalTooltip) {
+  background: rgba(12, 14, 18, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: #fff;
+  font-size: 11px;
+  padding: 4px 8px;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.35);
+}
+
 @media (max-width: 900px) {
   .mapWrap {
     height: 65vh;
   }
 }
 </style>
+
+
+
+
