@@ -8,6 +8,7 @@ const VEGETATION_CELL_SIZE_M = 50
 const VEGETATION_CACHE_VERSION = 2
 const VEGETATION_CACHE_BATCH = 5000
 const VEGETATION_CACHE_STORE_BATCH = 5000
+const VEGETATION_CACHE_CONCURRENCY = 4
 
 const IGN_WFS_URL = "https://data.geopf.fr/wfs/ows"
 const IGN_WFS_LAYERS = ["BDTOPO_V3:zone_de_vegetation"]
@@ -90,8 +91,11 @@ export async function fetchVegetationInSquare(lat, lng, sideKm, signal) {
 async function loadVegetationCellsFromCache(keys, signal) {
     if (!Array.isArray(keys) || keys.length === 0) return {}
     const out = {}
+    const batches = []
     for (let i = 0; i < keys.length; i += VEGETATION_CACHE_BATCH) {
-        const batch = keys.slice(i, i + VEGETATION_CACHE_BATCH)
+        batches.push(keys.slice(i, i + VEGETATION_CACHE_BATCH))
+    }
+    await runWithConcurrencyLimit(batches, VEGETATION_CACHE_CONCURRENCY, async (batch) => {
         try {
             const res = await fetch(CACHE_VEGETATION_ENDPOINT, {
                 method: "POST",
@@ -99,7 +103,7 @@ async function loadVegetationCellsFromCache(keys, signal) {
                 body: JSON.stringify({keys: batch}),
                 signal
             })
-            if (!res.ok) continue
+            if (!res.ok) return
             const json = await res.json().catch(() => null)
             const cells = json?.cells
             if (cells && typeof cells === "object") {
@@ -108,7 +112,7 @@ async function loadVegetationCellsFromCache(keys, signal) {
         } catch (err) {
             if (err?.name === "AbortError") throw err
         }
-    }
+    })
     return out
 }
 
@@ -116,8 +120,11 @@ async function saveVegetationCellsToCache(cells, signal) {
     if (!cells || typeof cells !== "object") return
     const entries = Object.entries(cells)
     if (!entries.length) return
+    const batches = []
     for (let i = 0; i < entries.length; i += VEGETATION_CACHE_STORE_BATCH) {
-        const batch = Object.fromEntries(entries.slice(i, i + VEGETATION_CACHE_STORE_BATCH))
+        batches.push(Object.fromEntries(entries.slice(i, i + VEGETATION_CACHE_STORE_BATCH)))
+    }
+    await runWithConcurrencyLimit(batches, VEGETATION_CACHE_CONCURRENCY, async (batch) => {
         try {
             await fetch(CACHE_VEGETATION_STORE_ENDPOINT, {
                 method: "POST",
@@ -128,7 +135,7 @@ async function saveVegetationCellsToCache(cells, signal) {
         } catch (err) {
             if (err?.name === "AbortError") throw err
         }
-    }
+    })
 }
 
 function isInFrance(lat, lng) {

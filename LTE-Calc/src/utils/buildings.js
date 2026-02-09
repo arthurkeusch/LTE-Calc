@@ -15,10 +15,12 @@ const BUILDING_CELL_SIZE_M = 500
 const BUILDING_CACHE_VERSION = 1
 const BUILDING_CACHE_BATCH = 500
 const BUILDING_CACHE_STORE_BATCH = 500
+const BUILDING_CACHE_CONCURRENCY = 4
 export const DENSITY_CELL_SIZE_M = 100
 const DENSITY_CACHE_VERSION = 1
 const DENSITY_CACHE_BATCH = 1000
 const DENSITY_CACHE_STORE_BATCH = 1000
+const DENSITY_CACHE_CONCURRENCY = 4
 const BACKEND_BASE_URL = "https://lte-calc.arthur-keusch.fr:3000"
 const CACHE_BUILDING_HEIGHTS_ENDPOINT = `${BACKEND_BASE_URL}/cache/building-heights`
 const CACHE_BUILDING_HEIGHTS_STORE_ENDPOINT = `${BACKEND_BASE_URL}/cache/building-heights/store`
@@ -28,7 +30,8 @@ const CACHE_BUILDINGS_STORE_ENDPOINT = `${BACKEND_BASE_URL}/cache/buildings/stor
 const CACHE_DENSITY_ENDPOINT = `${BACKEND_BASE_URL}/cache/density`
 const CACHE_DENSITY_STORE_ENDPOINT = `${BACKEND_BASE_URL}/cache/density/store`
 const CACHE_STATS_ENDPOINT = `${BACKEND_BASE_URL}/cache/stats`
-const CACHE_HEIGHTS_QUERY_BATCH = 100000
+const CACHE_HEIGHTS_QUERY_BATCH = 1000
+const CACHE_HEIGHTS_CONCURRENCY = 3
 
 const ALTI_ENDPOINT = "https://data.geopf.fr/altimetrie/1.0/calcul/alti/rest/elevation.json"
 const ALTI_RESOURCE_ID = "ign_lidar_hd_mnx_multi_wld"
@@ -101,8 +104,11 @@ function buildBuildingCells(bounds) {
 async function loadBuildingsFromCache(keys, signal) {
     if (!Array.isArray(keys) || keys.length === 0) return {}
     const out = {}
+    const batches = []
     for (let i = 0; i < keys.length; i += BUILDING_CACHE_BATCH) {
-        const batch = keys.slice(i, i + BUILDING_CACHE_BATCH)
+        batches.push(keys.slice(i, i + BUILDING_CACHE_BATCH))
+    }
+    await runWithConcurrencyLimit(batches, BUILDING_CACHE_CONCURRENCY, async (batch) => {
         try {
             const res = await fetch(CACHE_BUILDINGS_ENDPOINT, {
                 method: "POST",
@@ -110,7 +116,7 @@ async function loadBuildingsFromCache(keys, signal) {
                 body: JSON.stringify({keys: batch}),
                 signal
             })
-            if (!res.ok) continue
+            if (!res.ok) return
             const json = await res.json().catch(() => null)
             const cells = json?.cells
             if (cells && typeof cells === "object") {
@@ -119,7 +125,7 @@ async function loadBuildingsFromCache(keys, signal) {
         } catch (err) {
             if (err?.name === "AbortError") throw err
         }
-    }
+    })
     return out
 }
 
@@ -127,8 +133,11 @@ async function saveBuildingsToCache(cells, signal) {
     if (!cells || typeof cells !== "object") return
     const entries = Object.entries(cells)
     if (!entries.length) return
+    const batches = []
     for (let i = 0; i < entries.length; i += BUILDING_CACHE_STORE_BATCH) {
-        const batch = Object.fromEntries(entries.slice(i, i + BUILDING_CACHE_STORE_BATCH))
+        batches.push(Object.fromEntries(entries.slice(i, i + BUILDING_CACHE_STORE_BATCH)))
+    }
+    await runWithConcurrencyLimit(batches, BUILDING_CACHE_CONCURRENCY, async (batch) => {
         try {
             await fetch(CACHE_BUILDINGS_STORE_ENDPOINT, {
                 method: "POST",
@@ -139,14 +148,17 @@ async function saveBuildingsToCache(cells, signal) {
         } catch (err) {
             if (err?.name === "AbortError") throw err
         }
-    }
+    })
 }
 
 export async function loadDensityFromCache(keys, signal) {
     if (!Array.isArray(keys) || keys.length === 0) return {}
     const out = {}
+    const batches = []
     for (let i = 0; i < keys.length; i += DENSITY_CACHE_BATCH) {
-        const batch = keys.slice(i, i + DENSITY_CACHE_BATCH)
+        batches.push(keys.slice(i, i + DENSITY_CACHE_BATCH))
+    }
+    await runWithConcurrencyLimit(batches, DENSITY_CACHE_CONCURRENCY, async (batch) => {
         try {
             const res = await fetch(CACHE_DENSITY_ENDPOINT, {
                 method: "POST",
@@ -154,7 +166,7 @@ export async function loadDensityFromCache(keys, signal) {
                 body: JSON.stringify({keys: batch}),
                 signal
             })
-            if (!res.ok) continue
+            if (!res.ok) return
             const json = await res.json().catch(() => null)
             const cells = json?.cells
             if (cells && typeof cells === "object") {
@@ -163,7 +175,7 @@ export async function loadDensityFromCache(keys, signal) {
         } catch (err) {
             if (err?.name === "AbortError") throw err
         }
-    }
+    })
     return out
 }
 
@@ -171,8 +183,11 @@ export async function saveDensityToCache(cells, signal) {
     if (!cells || typeof cells !== "object") return
     const entries = Object.entries(cells)
     if (!entries.length) return
+    const batches = []
     for (let i = 0; i < entries.length; i += DENSITY_CACHE_STORE_BATCH) {
-        const batch = Object.fromEntries(entries.slice(i, i + DENSITY_CACHE_STORE_BATCH))
+        batches.push(Object.fromEntries(entries.slice(i, i + DENSITY_CACHE_STORE_BATCH)))
+    }
+    await runWithConcurrencyLimit(batches, DENSITY_CACHE_CONCURRENCY, async (batch) => {
         try {
             await fetch(CACHE_DENSITY_STORE_ENDPOINT, {
                 method: "POST",
@@ -183,7 +198,7 @@ export async function saveDensityToCache(cells, signal) {
         } catch (err) {
             if (err?.name === "AbortError") throw err
         }
-    }
+    })
 }
 
 export async function loadBuildingHeightsFromCache(ids, signal, onBatch) {
@@ -197,7 +212,7 @@ export async function loadBuildingHeightsFromCache(ids, signal, onBatch) {
 
     const totalBatches = batches.length || 1
     let completed = 0
-    await runWithConcurrencyLimit(batches, 1, async ({batch}) => {
+    await runWithConcurrencyLimit(batches, CACHE_HEIGHTS_CONCURRENCY, async ({batch}) => {
         try {
             const res = await fetch(CACHE_BUILDING_HEIGHTS_ENDPOINT, {
                 method: "POST",

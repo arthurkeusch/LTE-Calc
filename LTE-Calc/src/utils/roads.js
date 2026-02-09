@@ -4,7 +4,8 @@ import {
     clipPolylineToBounds,
     computeSquareBounds,
     delay,
-    mercatorCellIndex
+    mercatorCellIndex,
+    runWithConcurrencyLimit
 } from "./shared"
 
 const OVERPASS_PRIMARY = "https://overpass-api.de/api/interpreter"
@@ -14,6 +15,7 @@ const ROAD_CELL_SIZE_M = 1000
 const ROAD_CACHE_VERSION = 1
 const ROAD_CACHE_BATCH = 500
 const ROAD_CACHE_STORE_BATCH = 500
+const ROAD_CACHE_CONCURRENCY = 4
 const BACKEND_BASE_URL = "https://lte-calc.arthur-keusch.fr:3000"
 const CACHE_ROADS_ENDPOINT = `${BACKEND_BASE_URL}/cache/roads`
 const CACHE_ROADS_STORE_ENDPOINT = `${BACKEND_BASE_URL}/cache/roads/store`
@@ -79,8 +81,11 @@ function buildRoadCells(bounds) {
 async function loadRoadCellsFromCache(keys, signal) {
     if (!Array.isArray(keys) || keys.length === 0) return {}
     const out = {}
+    const batches = []
     for (let i = 0; i < keys.length; i += ROAD_CACHE_BATCH) {
-        const batch = keys.slice(i, i + ROAD_CACHE_BATCH)
+        batches.push(keys.slice(i, i + ROAD_CACHE_BATCH))
+    }
+    await runWithConcurrencyLimit(batches, ROAD_CACHE_CONCURRENCY, async (batch) => {
         try {
             const res = await fetch(CACHE_ROADS_ENDPOINT, {
                 method: "POST",
@@ -88,7 +93,7 @@ async function loadRoadCellsFromCache(keys, signal) {
                 body: JSON.stringify({keys: batch}),
                 signal
             })
-            if (!res.ok) continue
+            if (!res.ok) return
             const json = await res.json().catch(() => null)
             const cells = json?.cells
             if (cells && typeof cells === "object") {
@@ -97,7 +102,7 @@ async function loadRoadCellsFromCache(keys, signal) {
         } catch (err) {
             if (err?.name === "AbortError") throw err
         }
-    }
+    })
     return out
 }
 
@@ -105,8 +110,11 @@ async function saveRoadCellsToCache(cells, signal) {
     if (!cells || typeof cells !== "object") return
     const entries = Object.entries(cells)
     if (!entries.length) return
+    const batches = []
     for (let i = 0; i < entries.length; i += ROAD_CACHE_STORE_BATCH) {
-        const batch = Object.fromEntries(entries.slice(i, i + ROAD_CACHE_STORE_BATCH))
+        batches.push(Object.fromEntries(entries.slice(i, i + ROAD_CACHE_STORE_BATCH)))
+    }
+    await runWithConcurrencyLimit(batches, ROAD_CACHE_CONCURRENCY, async (batch) => {
         try {
             await fetch(CACHE_ROADS_STORE_ENDPOINT, {
                 method: "POST",
@@ -117,7 +125,7 @@ async function saveRoadCellsToCache(cells, signal) {
         } catch (err) {
             if (err?.name === "AbortError") throw err
         }
-    }
+    })
 }
 
 async function fillRoadCellsFromOverpass(cells, signal) {

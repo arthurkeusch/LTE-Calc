@@ -442,6 +442,16 @@ function scheduleSpeedRefresh() {
           heightProgress.value = 1
           return
         }
+        const totalHeights = rawBuildings.length
+        const knownCount = (list) => {
+          if (!Array.isArray(list)) return 0
+          return list.reduce((acc, b) => acc + (Number.isFinite(b?.height) ? 1 : 0), 0)
+        }
+        const updateHeightProgress = (list) => {
+          if (!totalHeights) return
+          const done = knownCount(list)
+          heightProgress.value = Math.max(0, Math.min(1, done / totalHeights))
+        }
 
         let cacheBuffer = {}
         let cacheBufferCount = 0
@@ -480,7 +490,7 @@ function scheduleSpeedRefresh() {
           if (heightValues.length > 0) {
             buildingHeightStats.value = computeHeightStats(heightValues)
           }
-          if (Number.isFinite(progress)) heightProgress.value = Math.min(0.35, progress * 0.35)
+          updateHeightProgress(withCached)
         })
         withCached = rawBuildings.map((b) => {
           const cached = cachedHeights?.[b.id]
@@ -497,6 +507,8 @@ function scheduleSpeedRefresh() {
           heightProgress.value = 1
           return
         }
+        const cachedCount = knownCount(withCached)
+        const missingCount = Math.max(0, totalHeights - cachedCount)
 
         try {
           const mergedMissing = await applyAltimetryHeights(missing, aborter.signal, (partial, progress) => {
@@ -508,7 +520,10 @@ function scheduleSpeedRefresh() {
               buildingHeightStats.value = computeHeightStats(partialHeights)
             }
             if (Number.isFinite(progress)) {
-              heightProgress.value = Math.max(0.35, 0.35 + progress * 0.65)
+              const scaled = missingCount ? cachedCount + progress * missingCount : cachedCount
+              heightProgress.value = Math.max(0, Math.min(1, scaled / totalHeights))
+            } else {
+              updateHeightProgress(mergedPartial)
             }
             for (const b of partial) addToCacheBuffer(b)
             flushCacheBuffer(false)

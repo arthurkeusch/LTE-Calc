@@ -7,6 +7,7 @@ const RELIEF_CELL_SIZE_M = RELIEF_SAMPLE_STEP_M
 const RELIEF_CACHE_VERSION = 1
 const RELIEF_CACHE_BATCH = 500
 const RELIEF_CACHE_STORE_BATCH = 500
+const RELIEF_CACHE_CONCURRENCY = 4
 const BACKEND_BASE_URL = "https://lte-calc.arthur-keusch.fr:3000"
 const CACHE_RELIEF_ENDPOINT = `${BACKEND_BASE_URL}/cache/relief`
 const CACHE_RELIEF_STORE_ENDPOINT = `${BACKEND_BASE_URL}/cache/relief/store`
@@ -237,8 +238,11 @@ async function fetchAltimetryElevations(points, signal) {
 async function loadReliefCellsFromCache(keys, signal) {
     if (!Array.isArray(keys) || keys.length === 0) return {}
     const out = {}
+    const batches = []
     for (let i = 0; i < keys.length; i += RELIEF_CACHE_BATCH) {
-        const batch = keys.slice(i, i + RELIEF_CACHE_BATCH)
+        batches.push(keys.slice(i, i + RELIEF_CACHE_BATCH))
+    }
+    await runWithConcurrencyLimit(batches, RELIEF_CACHE_CONCURRENCY, async (batch) => {
         try {
             const res = await fetch(CACHE_RELIEF_ENDPOINT, {
                 method: "POST",
@@ -246,7 +250,7 @@ async function loadReliefCellsFromCache(keys, signal) {
                 body: JSON.stringify({keys: batch}),
                 signal
             })
-            if (!res.ok) continue
+            if (!res.ok) return
             const json = await res.json().catch(() => null)
             const cells = json?.cells
             if (cells && typeof cells === "object") {
@@ -255,7 +259,7 @@ async function loadReliefCellsFromCache(keys, signal) {
         } catch (err) {
             if (err?.name === "AbortError") throw err
         }
-    }
+    })
     return out
 }
 
@@ -263,8 +267,11 @@ async function saveReliefCellsToCache(cells, signal) {
     if (!cells || typeof cells !== "object") return
     const entries = Object.entries(cells)
     if (!entries.length) return
+    const batches = []
     for (let i = 0; i < entries.length; i += RELIEF_CACHE_STORE_BATCH) {
-        const batch = Object.fromEntries(entries.slice(i, i + RELIEF_CACHE_STORE_BATCH))
+        batches.push(Object.fromEntries(entries.slice(i, i + RELIEF_CACHE_STORE_BATCH)))
+    }
+    await runWithConcurrencyLimit(batches, RELIEF_CACHE_CONCURRENCY, async (batch) => {
         try {
             await fetch(CACHE_RELIEF_STORE_ENDPOINT, {
                 method: "POST",
@@ -275,7 +282,7 @@ async function saveReliefCellsToCache(cells, signal) {
         } catch (err) {
             if (err?.name === "AbortError") throw err
         }
-    }
+    })
 }
 
 async function fillReliefCellsFromIgn(cells, signal) {
