@@ -627,9 +627,17 @@ watch([
   anyLoading
 ], () => {
   if (advancedTimer) clearTimeout(advancedTimer)
-  if (!selected.value || simulationMode.value !== "advanced") {
+  if (!selected.value) {
     signalGrid.value = []
     antennaSite.value = null
+    return
+  }
+  if (simulationMode.value !== "advanced") {
+    signalGrid.value = []
+    antennaSite.value = {
+      lat: selected.value.lat,
+      lng: selected.value.lng
+    }
     return
   }
   advancedTimer = setTimeout(() => {

@@ -350,6 +350,12 @@ let antennaMarker = null
 let antennaHalo = null
 let signalTooltip = null
 let signalHoverIndex = {zoom: null, index: new Map(), size: L.point(256, 256)}
+const antennaIcon = L.icon({
+  iconUrl: "/antenna.svg",
+  iconSize: [34, 34],
+  iconAnchor: [17, 20],
+  tooltipAnchor: [0, -28]
+})
 
 function boundsFromCenter(lat, lng, halfSideM) {
   const latRad = (lat * Math.PI) / 180
@@ -856,8 +862,7 @@ function estimateMaxThroughputMbps(signalDbm, bwMHz) {
 function updateAntennaMarker() {
   if (!map) return
   const site = antennaSite.value
-  const visible = simulationMode.value === "advanced" &&
-      site &&
+  const visible = site &&
       Number.isFinite(site.lat) &&
       Number.isFinite(site.lng)
 
@@ -875,13 +880,9 @@ function updateAntennaMarker() {
 
   const latlng = [site.lat, site.lng]
   if (!antennaMarker) {
-    antennaMarker = L.circleMarker(latlng, {
-      radius: 12,
-      weight: 3,
-      opacity: 1,
-      color: "#ffffff",
-      fillColor: "#00d1ff",
-      fillOpacity: 0.95,
+    antennaMarker = L.marker(latlng, {
+      icon: antennaIcon,
+      zIndexOffset: 1000,
       pane: "markerPane"
     }).addTo(map)
   } else {
@@ -901,10 +902,13 @@ function updateAntennaMarker() {
     antennaHalo.setLatLng(latlng)
   }
 
-  const height = formatNumber(site.heightM, 1)
-  const gain = formatNumber(site.gainDb, 1)
-  const eirp = formatNumber(site.eirpDbm, 1)
-  const tooltip = `Antenna site<br/>Height: ${height} m<br/>Gain: ${gain} dBi<br/>EIRP: ${eirp} dBm`
+  const details = []
+  if (Number.isFinite(site.heightM)) details.push(`Height: ${formatNumber(site.heightM, 1)} m`)
+  if (Number.isFinite(site.gainDb)) details.push(`Gain: ${formatNumber(site.gainDb, 1)} dBi`)
+  if (Number.isFinite(site.eirpDbm)) details.push(`EIRP: ${formatNumber(site.eirpDbm, 1)} dBm`)
+  const tooltip = details.length
+      ? `Antenna site<br/>${details.join("<br/>")}`
+      : "Antenna site"
   if (antennaMarker.getTooltip()) {
     antennaMarker.setTooltipContent(tooltip)
   } else {
