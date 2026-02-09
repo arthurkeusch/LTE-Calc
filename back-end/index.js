@@ -9,6 +9,7 @@ const CACHE_PREFIX_HEIGHTS = "lte:building-height:";
 const CACHE_PREFIX_ROADS = "lte:roads:";
 const CACHE_PREFIX_BUILDINGS = "lte:buildings:";
 const CACHE_PREFIX_DENSITY = "lte:density:";
+const CACHE_PREFIX_VEGETATION = "lte:vegetation-cell:";
 
 app.use(express.json({limit: "10mb"}));
 app.use((req, res, next) => {
@@ -241,6 +242,56 @@ app.post("/cache/density/store", async (req, res) => {
     res.json({stored: true});
 });
 
+app.post("/cache/vegetation", async (req, res) => {
+    const keys = Array.isArray(req.body?.keys) ? req.body.keys : [];
+    const single = normalizeCacheKey(req.body?.key);
+    const list = keys.length ? keys : (single ? [single] : []);
+    if (!list.length) return res.json({cells: {}});
+
+    const redisKeys = list.map((k) => cacheKey(CACHE_PREFIX_VEGETATION, normalizeCacheKey(k)));
+    const values = await redis.mGet(redisKeys);
+    const cells = {};
+    for (let i = 0; i < list.length; i++) {
+        const raw = values[i];
+        if (!raw) continue;
+        try {
+            const data = JSON.parse(raw);
+            if (data && typeof data === "object") {
+                cells[list[i]] = data;
+            }
+        } catch {
+            // ignore invalid cache entries
+        }
+    }
+    res.json({cells});
+});
+
+app.post("/cache/vegetation/store", async (req, res) => {
+    const payload = req.body?.cells;
+    const singleKey = normalizeCacheKey(req.body?.key);
+    const singleData = req.body?.data;
+    const cells = payload && typeof payload === "object"
+        ? payload
+        : (singleKey && singleData && typeof singleData === "object" ? {[singleKey]: singleData} : null);
+
+    if (!cells || typeof cells !== "object") {
+        return res.status(400).json({error: "Invalid vegetation payload"});
+    }
+    const entries = Object.entries(cells);
+    if (!entries.length) return res.json({stored: 0});
+
+    const pipeline = redis.multi();
+    let stored = 0;
+    for (const [key, data] of entries) {
+        const k = normalizeCacheKey(key);
+        if (!k || !data || typeof data !== "object") continue;
+        pipeline.set(cacheKey(CACHE_PREFIX_VEGETATION, k), JSON.stringify(data), {EX: CACHE_TTL_SECONDS});
+        stored++;
+    }
+    if (stored) await pipeline.exec();
+    res.json({stored});
+});
+
 app.get("/cache/building-heights/stats/stream", async (req, res) => {
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
@@ -314,15 +365,17 @@ app.get("/cache/stats", async (req, res) => {
     const roads = await scanCacheStats(CACHE_PREFIX_ROADS, heights.exact);
     const buildings = await scanCacheStats(CACHE_PREFIX_BUILDINGS, heights.exact);
     const density = await scanCacheStats(CACHE_PREFIX_DENSITY, heights.exact);
-    const totalBytes = heights.bytes + roads.bytes + buildings.bytes + density.bytes;
-    const totalCount = heights.count + roads.count + buildings.count + density.count;
+    const vegetation = await scanCacheStats(CACHE_PREFIX_VEGETATION, heights.exact);
+    const totalBytes = heights.bytes + roads.bytes + buildings.bytes + density.bytes + vegetation.bytes;
+    const totalCount = heights.count + roads.count + buildings.count + density.count + vegetation.count;
     res.json({
-        exact: heights.exact && roads.exact && buildings.exact && density.exact,
+        exact: heights.exact && roads.exact && buildings.exact && density.exact && vegetation.exact,
         total: {count: totalCount, bytes: totalBytes, mb: totalBytes / (1024 * 1024)},
         heights,
         roads,
         buildings,
-        density
+        density,
+        vegetation
     });
 });
 
@@ -331,9 +384,10 @@ app.post("/cache/building-heights/reset", async (req, res) => {
         heights: await deleteByPrefix(CACHE_PREFIX_HEIGHTS),
         roads: await deleteByPrefix(CACHE_PREFIX_ROADS),
         buildings: await deleteByPrefix(CACHE_PREFIX_BUILDINGS),
-        density: await deleteByPrefix(CACHE_PREFIX_DENSITY)
+        density: await deleteByPrefix(CACHE_PREFIX_DENSITY),
+        vegetation: await deleteByPrefix(CACHE_PREFIX_VEGETATION)
     };
-    const total = deleted.heights + deleted.roads + deleted.buildings + deleted.density;
+    const total = deleted.heights + deleted.roads + deleted.buildings + deleted.density + deleted.vegetation;
     res.json({deleted, total});
 });
 

@@ -393,6 +393,39 @@
         <div class="divider"></div>
 
         <div class="section">
+          <div class="sTitle">Vegetation coverage</div>
+
+          <div v-if="!selected" class="muted">
+            Select a point to compute vegetation.
+          </div>
+
+          <div v-else>
+            <div v-if="vegetationError" class="error">{{ vegetationError }}</div>
+            <div v-else-if="!vegetationStats" class="muted">
+              <span v-if="vegetationLoading">Loading vegetation...</span>
+              <span v-else>No vegetation data found in this area.</span>
+            </div>
+            <div v-else class="speedCard">
+              <div class="speedTop">
+                <div class="speedMetric">
+                  <div class="mLabel">Coverage</div>
+                  <div class="mValue">{{ vegetationPct }}%</div>
+                </div>
+                <div class="speedMeta">
+                  <div class="mSmall">Samples {{ vegetationSampleCount }}</div>
+                  <div class="mSmall">Source {{ vegetationSource }}</div>
+                </div>
+              </div>
+              <div class="vegBar">
+                <div class="vegFill" :style="{ width: vegetationPct + '%' }"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="divider"></div>
+
+        <div class="section">
           <div class="sTitle">Cache</div>
           <button
               class="actionBtn"
@@ -411,6 +444,7 @@
               <div>Roads: {{ cacheStats.roads.count }} zones - {{ cacheStats.roads.mb.toFixed(2) }} MB</div>
               <div>Buildings: {{ cacheStats.buildings.count }} zones - {{ cacheStats.buildings.mb.toFixed(2) }} MB</div>
               <div>Density: {{ cacheStats.density.count }} zones - {{ cacheStats.density.mb.toFixed(2) }} MB</div>
+              <div>Vegetation: {{ cacheStats.vegetation.count }} zones - {{ cacheStats.vegetation.mb.toFixed(2) }} MB</div>
               <div>Total: {{ cacheStats.total.mb.toFixed(2) }} MB</div>
               <div v-if="cacheStats.exact === false">Mode: estimate</div>
             </template>
@@ -452,6 +486,9 @@ const props = defineProps({
   buildingHeightError: { type: String, default: null },
   canyonStats: { type: Object, default: null },
   densityStats: { type: Object, default: null },
+  vegetationStats: { type: Object, default: null },
+  vegetationLoading: { type: Boolean, default: false },
+  vegetationError: { type: String, default: null },
   anyLoading: { type: Boolean, default: false },
   loadingProgress: { type: Number, default: 0 },
   cacheResetting: { type: Boolean, default: false },
@@ -462,7 +499,8 @@ const props = defineProps({
     heights: {count: 0, mb: 0},
     roads: {count: 0, mb: 0},
     buildings: {count: 0, mb: 0},
-    density: {count: 0, mb: 0}
+    density: {count: 0, mb: 0},
+    vegetation: {count: 0, mb: 0}
   }) },
   cacheStatsLoading: { type: Boolean, default: false }
 })
@@ -480,6 +518,22 @@ const plotTop = padT
 const plotBottom = 130 - padB
 
 const progressPct = computed(() => Math.round((props.loadingProgress || 0) * 100))
+const vegetationPct = computed(() => {
+  const c = Number(props.vegetationStats?.coverage)
+  if (!Number.isFinite(c)) return 0
+  return Math.max(0, Math.min(100, Math.round(c * 100)))
+})
+const vegetationSampleCount = computed(() => {
+  const n = Number(props.vegetationStats?.sampleCount)
+  return Number.isFinite(n) ? n : 0
+})
+const vegetationSource = computed(() => {
+  const src = (props.vegetationStats?.source || "").toString().toLowerCase()
+  if (src === "ign") return "IGN"
+  if (src === "worldcover" || src === "worldcover_cog") return "WorldCover"
+  if (src === "mixed") return "Mixed"
+  return "unknown"
+})
 
 function xFromSpeed(value) {
   if (!props.speedStats) return plotLeft
@@ -1075,6 +1129,20 @@ function canyonClassLabel(value) {
   font-size: 11px;
   opacity: 0.7;
   text-align: right;
+}
+
+.vegBar {
+  height: 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.06);
+  overflow: hidden;
+}
+
+.vegFill {
+  height: 100%;
+  background: linear-gradient(90deg, rgba(46, 204, 113, 0.6), rgba(46, 204, 113, 0.95));
+  transition: width 0.2s ease;
 }
 
 .actionBtn {

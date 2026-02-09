@@ -14,6 +14,9 @@
         :buildingHeightError="buildingHeightError"
         :canyonStats="canyonStats"
         :densityStats="densityStats"
+        :vegetationStats="vegetationStats"
+        :vegetationLoading="vegetationLoading"
+        :vegetationError="vegetationError"
         :anyLoading="anyLoading"
         :loadingProgress="loadingProgress"
         :cacheResetting="cacheResetting"
@@ -29,11 +32,13 @@
         v-model:showBuildings="showBuildings"
         v-model:showBuildingHeights="showBuildingHeights"
         v-model:showDensityGrid="showDensityGrid"
+        v-model:showVegetation="showVegetation"
         :zoneSideKm="zoneSideKm"
         :roads="roadsData"
         :canyonRoads="canyonRoads"
         :buildings="buildingsData"
         :densityGrid="densityGrid"
+        :vegetationCells="vegetationCells"
     />
   </div>
 </template>
@@ -57,6 +62,7 @@ import {
   applyAltimetryHeights
 } from "@/utils/buildings"
 import {computeStreetCanyonStats} from "@/utils/canyons"
+import {fetchVegetationInSquare} from "@/utils/vegetation"
 import {areaCacheKey} from "@/utils/cacheKeys"
 
 const zoneSideKm = ref(1.0)
@@ -66,6 +72,7 @@ const showCanyons = ref(false)
 const showBuildings = ref(true)
 const showBuildingHeights = ref(true)
 const showDensityGrid = ref(false)
+const showVegetation = ref(false)
 
 const speedStats = ref(null)
 const roadsData = ref([])
@@ -83,9 +90,14 @@ const densityStats = ref(null)
 const densityGrid = ref([])
 const canyonStats = ref(null)
 const canyonRoads = ref([])
+const vegetationStats = ref(null)
+const vegetationLoading = ref(false)
+const vegetationError = ref(null)
+const vegetationCells = ref([])
 const speedProgress = ref(0)
 const buildingProgress = ref(0)
 const heightProgress = ref(0)
+const vegetationProgress = ref(0)
 const cacheResetting = ref(false)
 const cacheResetError = ref(null)
 const emptyCacheStats = () => ({
@@ -94,14 +106,20 @@ const emptyCacheStats = () => ({
   heights: {count: 0, mb: 0},
   roads: {count: 0, mb: 0},
   buildings: {count: 0, mb: 0},
-  density: {count: 0, mb: 0}
+  density: {count: 0, mb: 0},
+  vegetation: {count: 0, mb: 0}
 })
 const cacheStats = ref(emptyCacheStats())
 const cacheStatsLoading = ref(false)
-const anyLoading = computed(() => speedLoading.value || buildingLoading.value || buildingHeightLoading.value)
+const anyLoading = computed(() => (
+  speedLoading.value ||
+  buildingLoading.value ||
+  buildingHeightLoading.value ||
+  vegetationLoading.value
+))
 const loadingProgress = computed(() => {
-  const total = 3
-  const sum = speedProgress.value + buildingProgress.value + heightProgress.value
+  const total = 4
+  const sum = speedProgress.value + buildingProgress.value + heightProgress.value + vegetationProgress.value
   return Math.max(0, Math.min(1, sum / total))
 })
 
@@ -131,7 +149,8 @@ async function loadCacheStats() {
       heights: norm(stats?.heights),
       roads: norm(stats?.roads),
       buildings: norm(stats?.buildings),
-      density: norm(stats?.density)
+      density: norm(stats?.density),
+      vegetation: norm(stats?.vegetation)
     }
   } catch {
     cacheStats.value = emptyCacheStats()
@@ -244,6 +263,11 @@ function scheduleSpeedRefresh() {
     speedProgress.value = 0
     buildingProgress.value = 0
     heightProgress.value = 0
+    vegetationStats.value = null
+    vegetationError.value = null
+    vegetationLoading.value = false
+    vegetationCells.value = []
+    vegetationProgress.value = 0
     return
   }
 
@@ -261,6 +285,9 @@ function scheduleSpeedRefresh() {
     speedProgress.value = 0
     buildingProgress.value = 0
     heightProgress.value = 0
+    vegetationLoading.value = true
+    vegetationError.value = null
+    vegetationProgress.value = 0
 
     try {
       const roadsPromise = (async () => {
@@ -282,6 +309,29 @@ function scheduleSpeedRefresh() {
             roadsData.value = []
             speedLoading.value = false
             speedProgress.value = 1
+          }
+        }
+      })()
+
+      const vegetationPromise = (async () => {
+        try {
+          const data = await fetchVegetationInSquare(
+              selected.value.lat,
+              selected.value.lng,
+              zoneSideKm.value,
+              aborter.signal
+          )
+          vegetationStats.value = data
+          vegetationCells.value = Array.isArray(data?.cells) ? data.cells : []
+          vegetationLoading.value = false
+          vegetationProgress.value = 1
+        } catch (err) {
+          if (err?.name !== "AbortError") {
+            vegetationError.value = err?.message || "Failed to fetch vegetation"
+            vegetationStats.value = null
+            vegetationCells.value = []
+            vegetationLoading.value = false
+            vegetationProgress.value = 1
           }
         }
       })()
@@ -410,12 +460,13 @@ function scheduleSpeedRefresh() {
         }
       })
 
-      await Promise.allSettled([roadsPromise, buildingsPromise, heightsPromise])
+      await Promise.allSettled([roadsPromise, vegetationPromise, buildingsPromise, heightsPromise])
       scheduleCacheStatsRefresh()
     } finally {
       speedLoading.value = false
       buildingLoading.value = false
       buildingHeightLoading.value = false
+      vegetationLoading.value = false
     }
   }, 350)
 }

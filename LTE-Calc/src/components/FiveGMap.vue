@@ -1,7 +1,7 @@
 <template>
   <section class="mapWrap">
     <div class="map" ref="mapEl"></div>
-    <div v-if="roads.length || canyonRoads.length || buildings.length" class="legend">
+    <div v-if="roads.length || canyonRoads.length || buildings.length || densityGrid.length || vegetationCells.length" class="legend">
       <div class="legendTitle">Road speed colors</div>
       <label class="legendToggle">
         <input
@@ -86,6 +86,25 @@
         </div>
       </div>
       <div class="legendDivider"></div>
+      <div class="legendTitle">Vegetation</div>
+      <label class="legendToggle">
+        <input
+            class="legendCheckbox"
+            type="checkbox"
+            :checked="showVegetation"
+            :disabled="!canToggleVegetation"
+            @change="$emit('update:showVegetation', $event.target.checked)"
+        />
+        <span>Show vegetation</span>
+      </label>
+      <div v-if="showVegetation && vegetationRange" class="legendScale">
+        <div class="legendBar legendBarVegetation"></div>
+        <div class="legendRange">
+          <span>{{ Math.round(vegetationRange.min * 100) }}%</span>
+          <span>{{ Math.round(vegetationRange.max * 100) }}%</span>
+        </div>
+      </div>
+      <div class="legendDivider"></div>
       <div class="legendTitle">Density grid</div>
       <label class="legendToggle">
         <input
@@ -155,7 +174,15 @@ const props = defineProps({
     type: Boolean,
     default: false
   },
+  showVegetation: {
+    type: Boolean,
+    default: false
+  },
   densityGrid: {
+    type: Array,
+    default: () => []
+  },
+  vegetationCells: {
     type: Array,
     default: () => []
   }
@@ -167,7 +194,8 @@ const emit = defineEmits([
   'update:showCanyons',
   'update:showBuildings',
   'update:showBuildingHeights',
-  'update:showDensityGrid'
+  'update:showDensityGrid',
+  'update:showVegetation'
 ])
 
 const mapEl = ref(null)
@@ -181,12 +209,15 @@ const {
   buildings,
   showBuildingHeights,
   showDensityGrid,
-  densityGrid
+  densityGrid,
+  showVegetation,
+  vegetationCells
 } = toRefs(props)
 const canToggleRoads = computed(() => roads.value.length > 0)
 const canToggleCanyons = computed(() => canyonRoads.value.length > 0)
 const canToggleBuildings = computed(() => buildings.value.length > 0)
 const canToggleDensityGrid = computed(() => densityGrid.value.length > 0)
+const canToggleVegetation = computed(() => vegetationCells.value.length > 0)
 const heightRange = computed(() => {
   const vals = (buildings.value || []).map(b => b.height).filter(n => Number.isFinite(n))
   if (!vals.length) return null
@@ -197,6 +228,14 @@ const densityRange = computed(() => {
   if (!vals.length) return null
   return {min: Math.min(...vals), max: Math.max(...vals)}
 })
+const vegetationRange = computed(() => {
+  const vals = (vegetationCells.value || []).map(c => c.score).filter(n => Number.isFinite(n))
+  if (!vals.length) return null
+  const min = Math.min(...vals)
+  const max = Math.max(...vals)
+  if (max <= min) return {min: 0, max: 1}
+  return {min, max}
+})
 const canToggleBuildingHeights = computed(() => showBuildings.value && !!heightRange.value)
 
 let map = null
@@ -204,6 +243,7 @@ let centerDot = null
 let square = null
 let roadLayers = L.layerGroup()
 let canyonLayers = L.layerGroup()
+let vegetationLayers = L.layerGroup()
 let buildingLayers = L.layerGroup()
 let densityGridLayers = L.layerGroup()
 
@@ -314,6 +354,30 @@ function updateLayers(fit = true) {
     })
   }
 
+  vegetationLayers.clearLayers()
+  if (props.showVegetation && props.vegetationCells.length) {
+    const range = vegetationRange.value || {min: 0, max: 1}
+    props.vegetationCells.forEach(cell => {
+      const score = Number(cell?.score)
+      if (!Number.isFinite(score) || score <= 0) return
+      const bounds = cell?.bounds
+      if (!Array.isArray(bounds)) return
+      const opacity = vegetationOpacity(score, range.min, range.max)
+      const rect = L.rectangle(bounds, {
+        color: "#2ECC71",
+        weight: 1,
+        opacity: 0.6,
+        fillColor: "#2ECC71",
+        fillOpacity: opacity
+      }).addTo(vegetationLayers)
+      rect.bindTooltip(`Vegetation: ${Math.round(score * 100)}%`, {
+        direction: "top",
+        sticky: true,
+        opacity: 0.9
+      })
+    })
+  }
+
   buildingLayers.clearLayers()
   if (props.showBuildings) {
     const range = heightRange.value
@@ -408,6 +472,13 @@ function densityToColor(density, min, max) {
   return `hsla(${hue}, 90%, 55%, 0.45)`
 }
 
+function vegetationOpacity(value, min, max) {
+  if (!Number.isFinite(value) || !Number.isFinite(min) || !Number.isFinite(max)) return 0
+  const t = max > min ? (value - min) / (max - min) : value
+  const clamped = Math.max(0, Math.min(1, t))
+  return 0.2 + clamped * 0.6
+}
+
 function onMapClick(e) {
   emit('update:selected', {lat: e.latlng.lat, lng: e.latlng.lng})
 }
@@ -425,6 +496,7 @@ onMounted(() => {
 
   roadLayers.addTo(map)
   canyonLayers.addTo(map)
+  vegetationLayers.addTo(map)
   buildingLayers.addTo(map)
   densityGridLayers.addTo(map)
 
@@ -487,6 +559,14 @@ watch(() => props.densityGrid, () => {
 }, {deep: true})
 
 watch(() => props.showDensityGrid, () => {
+  updateLayers(false)
+})
+
+watch(() => props.vegetationCells, () => {
+  updateLayers(false)
+}, {deep: true})
+
+watch(() => props.showVegetation, () => {
   updateLayers(false)
 })
 </script>
@@ -558,6 +638,10 @@ watch(() => props.showDensityGrid, () => {
 
 .legendBarDensity {
   background: linear-gradient(90deg, hsla(220, 90%, 55%, 0.4), hsla(0, 90%, 55%, 0.8));
+}
+
+.legendBarVegetation {
+  background: linear-gradient(90deg, rgba(46, 204, 113, 0.2), rgba(46, 204, 113, 0.9));
 }
 
 .legendScaleCanyons {
@@ -667,4 +751,3 @@ watch(() => props.showDensityGrid, () => {
   }
 }
 </style>
-
