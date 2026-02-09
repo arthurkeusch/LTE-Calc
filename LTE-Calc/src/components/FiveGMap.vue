@@ -143,9 +143,9 @@
           <span>{{ Math.round(densityRange.max * 100) }}%</span>
         </div>
       </div>
-      <div class="legendDivider"></div>
-      <div class="legendTitle">Signal strength</div>
-      <label class="legendToggle">
+      <div v-if="simulationMode === 'advanced'" class="legendDivider"></div>
+      <div v-if="simulationMode === 'advanced'" class="legendTitle">Signal strength</div>
+      <label v-if="simulationMode === 'advanced'" class="legendToggle">
         <input
             class="legendCheckbox"
             type="checkbox"
@@ -154,7 +154,7 @@
         />
         <span>Show signal map</span>
       </label>
-      <div v-if="showSignal && signalRange" class="legendScale">
+      <div v-if="simulationMode === 'advanced' && showSignal && signalRange" class="legendScale">
         <div class="legendBar legendBarSignal"></div>
         <div class="legendRange">
           <span>{{ Math.round(signalRange.min) }} dBm</span>
@@ -321,6 +321,7 @@ const signalRange = computed(() => {
   return {min, max}
 })
 const signalHoverActive = computed(() => (
+    simulationMode.value === "advanced" &&
     showSignal.value &&
     signalGrid.value.length > 0
 ))
@@ -928,7 +929,10 @@ onMounted(() => {
   setLayerVisibility(reliefLayer, props.showRelief)
   setLayerVisibility(vegetationLayer, props.showVegetation)
   setLayerVisibility(densityLayer, props.showDensityGrid)
-  setLayerVisibility(signalLayer, props.showSignal && props.signalGrid.length > 0)
+  setLayerVisibility(
+      signalLayer,
+      props.simulationMode === "advanced" && props.showSignal && props.signalGrid.length > 0
+  )
 
   roadLayers.addTo(map)
   canyonLayers.addTo(map)
@@ -1047,11 +1051,12 @@ watch(showRelief, (show) => {
 watch(signalGrid, (cells) => {
   if (signalLayer) signalLayer.setCells(cells)
   updateSignalHoverState()
-  const visible = showSignal.value &&
+  const visible = simulationMode.value === "advanced" &&
+      showSignal.value &&
       Array.isArray(cells) &&
       cells.length > 0
   setLayerVisibility(signalLayer, visible)
-  if (showSignal.value) {
+  if (simulationMode.value === "advanced" && showSignal.value) {
     updateLayers(false)
   }
 }, {deep: true})
@@ -1060,8 +1065,8 @@ watch(signalRange, (range) => {
   if (signalLayer) signalLayer.setRange(range)
 })
 
-watch([showSignal, signalGrid], ([show, cells]) => {
-  const visible = show && Array.isArray(cells) && cells.length > 0
+watch([simulationMode, showSignal, signalGrid], ([mode, show, cells]) => {
+  const visible = mode === "advanced" && show && Array.isArray(cells) && cells.length > 0
   setLayerVisibility(signalLayer, visible)
 })
 
