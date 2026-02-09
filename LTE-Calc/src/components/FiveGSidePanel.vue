@@ -257,6 +257,74 @@
         <div class="divider"></div>
 
         <div class="section">
+          <div class="sTitle">Street canyon index (H/W)</div>
+
+          <div v-if="!selected" class="muted">
+            Select a point to compute canyon index.
+          </div>
+
+          <div v-else>
+            <div v-if="!canyonStats || canyonStats.count === 0" class="muted">
+              <span v-if="buildingHeightLoading">Loading heights...</span>
+              <span v-else>No canyon data found in this area.</span>
+            </div>
+            <div v-else class="speedCard">
+              <div class="speedTop">
+                <div class="speedMetric">
+                  <div class="mLabel">Average H/W</div>
+                  <div class="mValue">{{ canyonStats.avg.toFixed(2) }}</div>
+                </div>
+                <div class="speedMeta">
+                  <div class="mSmall">{{ canyonStats.count }} roads</div>
+                  <div class="mSmall">min {{ canyonStats.min.toFixed(2) }} / max {{ canyonStats.max.toFixed(2) }}</div>
+                </div>
+              </div>
+              <div class="avgHint">Class: {{ canyonClassLabel(canyonStats.avg) }}</div>
+              <div class="chartWrap">
+                <svg class="chart" viewBox="0 0 260 130" preserveAspectRatio="none">
+                  <g>
+                    <line :x1="padL" :y1="plotBottom" :x2="plotRight" :y2="plotBottom" class="axis" />
+                    <line :x1="padL" :y1="plotTop" :x2="padL" :y2="plotBottom" class="axis" />
+
+                    <g v-for="t in cXTicks" :key="'cx'+t.value">
+                      <line :x1="t.x" :y1="plotBottom" :x2="t.x" :y2="plotBottom + 4" class="tickLine" />
+                      <text :x="t.x" :y="plotBottom + 14" text-anchor="middle" class="tickText">{{ t.value }}</text>
+                    </g>
+
+                    <g v-for="t in cYTicks" :key="'cy'+t.value">
+                      <line :x1="padL - 4" :y1="t.y" :x2="padL" :y2="t.y" class="tickLine" />
+                      <text :x="padL - 6" :y="t.y + 3" text-anchor="end" class="tickText">{{ t.value }}</text>
+                      <line :x1="padL" :y1="t.y" :x2="plotRight" :y2="t.y" class="gridLine" />
+                    </g>
+                  </g>
+
+                  <line
+                      :x1="xFromCanyonBucket(canyonStats.avg)"
+                      :y1="plotTop"
+                      :x2="xFromCanyonBucket(canyonStats.avg)"
+                      :y2="plotBottom"
+                      class="avgLine"
+                  />
+
+                  <g v-for="(b, i) in cBuckets" :key="'cb'+i">
+                    <rect
+                        :x="barX4(i)"
+                        :y="plotBottom - cBarH4(b)"
+                        :width="barW4"
+                        :height="cBarH4(b)"
+                        class="bar"
+                        rx="4"
+                    />
+                  </g>
+                </svg>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="divider"></div>
+
+        <div class="section">
           <div class="sTitle">Sub-zone density (coverage + count)</div>
 
           <div v-if="!selected" class="muted">
@@ -368,6 +436,7 @@
 
 <script setup>
 import { computed } from "vue"
+import { classifyStreetCanyonIndex } from "@/utils/canyons"
 
 const props = defineProps({
   selected: { type: Object, default: null },
@@ -381,6 +450,7 @@ const props = defineProps({
   buildingHeightStats: { type: Object, default: null },
   buildingHeightLoading: { type: Boolean, default: false },
   buildingHeightError: { type: String, default: null },
+  canyonStats: { type: Object, default: null },
   densityStats: { type: Object, default: null },
   anyLoading: { type: Boolean, default: false },
   loadingProgress: { type: Number, default: 0 },
@@ -446,11 +516,18 @@ function barH5(v) {
 }
 
 const barW5 = 30
+const barW4 = 34
 
 function barX5(i) {
   const span = plotRight - plotLeft
   const step = span / 5
   return plotLeft + i * step + (step - barW5) / 2
+}
+
+function barX4(i) {
+  const span = plotRight - plotLeft
+  const step = span / 4
+  return plotLeft + i * step + (step - barW4) / 2
 }
 
 const avgX = computed(() => xFromSpeed(props.speedStats?.avg ?? 0))
@@ -470,6 +547,50 @@ const xTicks = computed(() => {
 
 const yTicks = computed(() => {
   const maxY = maxHist5.value
+  const n = 4
+  const step = Math.max(1, Math.round(maxY / n))
+  const vals = []
+  for (let v = 0; v <= maxY; v += step) vals.push(v)
+  if (vals[vals.length - 1] !== maxY) vals.push(maxY)
+  return vals.map(v => ({
+    value: v,
+    y: plotBottom - (v / maxY) * (plotBottom - plotTop)
+  }))
+})
+
+function xFromCanyonBucket(value) {
+  if (!Number.isFinite(value)) return plotLeft
+  const min = 0
+  const max = 2
+  const clamped = Math.max(min, Math.min(max, value))
+  const t = (clamped - min) / (max - min)
+  const x = plotLeft + t * (plotRight - plotLeft)
+  return Math.min(plotRight, Math.max(plotLeft, x))
+}
+
+const cBuckets = computed(() => {
+  const b = props.canyonStats?.buckets
+  if (Array.isArray(b) && b.length === 4) return b
+  return [0, 0, 0, 0]
+})
+
+const cMaxBuckets = computed(() => Math.max(1, ...cBuckets.value))
+
+function cBarH4(v) {
+  const h = (v / cMaxBuckets.value) * (plotBottom - plotTop)
+  return Math.max(1, Math.min(plotBottom - plotTop, h))
+}
+
+const cXTicks = computed(() => {
+  const labels = ["0-0.5", "0.5-1", "1-2", ">=2"]
+  return labels.map((value, i) => ({
+    value,
+    x: barX4(i) + barW4 / 2
+  }))
+})
+
+const cYTicks = computed(() => {
+  const maxY = cMaxBuckets.value
   const n = 4
   const step = Math.max(1, Math.round(maxY / n))
   const vals = []
@@ -654,6 +775,15 @@ const quintileEdges = computed(() => {
     { from: d[7], to: props.speedStats.max }
   ]
 })
+
+function canyonClassLabel(value) {
+  const cls = classifyStreetCanyonIndex(value)
+  if (cls === "open") return "open"
+  if (cls === "urban") return "urban"
+  if (cls === "canyon") return "street canyon"
+  if (cls === "dense") return "dense canyon"
+  return "unknown"
+}
 </script>
 
 <style scoped>

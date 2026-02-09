@@ -327,12 +327,40 @@ export function computeDensityStats(values) {
 
 export async function applyAltimetryHeights(buildings, signal, onProgress) {
     if (!Array.isArray(buildings) || buildings.length === 0) return buildings || []
+    let next = buildings.slice()
+    const newHeights = {}
+    const cacheIds = []
+    for (let i = 0; i < next.length; i++) {
+        const b = next[i]
+        const current = Number(b?.height)
+        if (Number.isFinite(current)) continue
+        if (b?.id === undefined || b?.id === null) continue
+        cacheIds.push(b.id)
+    }
+    if (cacheIds.length) {
+        const uniqueIds = Array.from(new Set(cacheIds))
+        const cachedHeights = await loadBuildingHeightsFromCache(uniqueIds, signal)
+        if (cachedHeights && typeof cachedHeights === "object") {
+            next = next.map((b) => {
+                const current = Number(b?.height)
+                if (Number.isFinite(current)) return b
+                const cached = cachedHeights?.[b.id]
+                const cachedNum = Number(cached)
+                if (Number.isFinite(cachedNum) && cachedNum > 0) return {...b, height: cachedNum}
+                return b
+            })
+            if (typeof onProgress === "function") {
+                onProgress(next.slice(), 0)
+            }
+        }
+    }
     const missingIdx = []
     const points = []
     const firstPoints = new Map()
-    for (let i = 0; i < buildings.length; i++) {
-        const b = buildings[i]
-        if (Number.isFinite(b.height)) continue
+    for (let i = 0; i < next.length; i++) {
+        const b = next[i]
+        const current = Number(b?.height)
+        if (Number.isFinite(current)) continue
         const c = pickPointInsidePolygon(b.geometry)
         if (!c) continue
         missingIdx.push(i)
@@ -340,15 +368,16 @@ export async function applyAltimetryHeights(buildings, signal, onProgress) {
         firstPoints.set(i, c)
     }
 
-    if (!points.length) return buildings
+    if (!points.length) return next
 
-    const next = buildings.slice()
     const heights = await fetchAltimetryHeights(points, signal, (offset, batchHeights, completed, total) => {
         for (let i = 0; i < batchHeights.length; i++) {
             const idx = missingIdx[offset + i]
             const h = batchHeights[i]
             if (Number.isFinite(h) && h > 0) {
                 next[idx] = {...next[idx], height: h}
+                const id = next[idx]?.id
+                if (id !== undefined && id !== null) newHeights[id] = h
             }
         }
         if (typeof onProgress === "function") {
@@ -362,6 +391,8 @@ export async function applyAltimetryHeights(buildings, signal, onProgress) {
         const h = heights[i]
         if (Number.isFinite(h) && h > 0) {
             next[idx] = {...next[idx], height: h}
+            const id = next[idx]?.id
+            if (id !== undefined && id !== null) newHeights[id] = h
         }
     }
 
@@ -398,10 +429,20 @@ export async function applyAltimetryHeights(buildings, signal, onProgress) {
             const current = Number(next[idx]?.height)
             if (!Number.isFinite(current) || h > current) {
                 next[idx] = {...next[idx], height: h}
+                const id = next[idx]?.id
+                if (id !== undefined && id !== null) newHeights[id] = h
             }
         }
         if (typeof onProgress === "function") {
             onProgress(next.slice(), 1)
+        }
+    }
+    const newEntries = Object.entries(newHeights)
+    if (newEntries.length) {
+        try {
+            await saveBuildingHeightsToCache(newHeights, signal)
+        } catch {
+            // ignore cache save errors
         }
     }
     return next

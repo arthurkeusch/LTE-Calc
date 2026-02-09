@@ -31,13 +31,18 @@ out tags geom;`
         const highway = tags.highway
         if (!highway) continue
         const s = speedFromTags(tags, highway)
+        const lanes = parseLanes(tags.lanes)
+        const width = parseWidth(tags.width)
         if (Number.isFinite(s) && s > 0) {
             speeds.push(s)
             if (el.geometry) {
                 roads.push({
                     id: el.id,
                     speed: s,
-                    geometry: el.geometry.map(p => [p.lat, p.lon])
+                    geometry: el.geometry.map(p => [p.lat, p.lon]),
+                    lanes,
+                    width,
+                    highway
                 })
             }
         }
@@ -180,6 +185,34 @@ function parseMaxspeed(v) {
     if (!Number.isFinite(n)) return null
 
     if (s.includes("mph")) return n * 1.60934
+    return n
+}
+
+function parseLanes(v) {
+    if (v === undefined || v === null) return null
+    if (Number.isFinite(v)) return v > 0 ? Number(v) : null
+    if (typeof v !== "string") return null
+    const m = v.match(/(\d+(\.\d+)?)/g)
+    if (!m || m.length === 0) return null
+    const sum = m.reduce((acc, s) => {
+        const n = Number(s)
+        return Number.isFinite(n) ? acc + n : acc
+    }, 0)
+    return sum > 0 ? sum : null
+}
+
+function parseWidth(v) {
+    if (v === undefined || v === null) return null
+    if (Number.isFinite(v)) return v > 0 ? Number(v) : null
+    if (typeof v !== "string") return null
+    const s = v.trim().toLowerCase()
+    const m = s.match(/(\d+(\.\d+)?)/)
+    if (!m) return null
+    const n = Number(m[1])
+    if (!Number.isFinite(n) || n <= 0) return null
+    if (s.includes("cm")) return n / 100
+    if (s.includes("mm")) return n / 1000
+    if (s.includes("ft")) return n * 0.3048
     return n
 }
 

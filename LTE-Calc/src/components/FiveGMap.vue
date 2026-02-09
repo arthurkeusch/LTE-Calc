@@ -1,7 +1,7 @@
 <template>
   <section class="mapWrap">
     <div class="map" ref="mapEl"></div>
-    <div v-if="roads.length || buildings.length" class="legend">
+    <div v-if="roads.length || canyonRoads.length || buildings.length" class="legend">
       <div class="legendTitle">Road speed colors</div>
       <label class="legendToggle">
         <input
@@ -18,6 +18,36 @@
         <div class="legendRange">
           <span>20 km/h</span>
           <span>130 km/h</span>
+        </div>
+      </div>
+      <div class="legendDivider"></div>
+      <div class="legendTitle">Street canyons</div>
+      <label class="legendToggle">
+        <input
+            class="legendCheckbox"
+            type="checkbox"
+            :checked="showCanyons"
+            :disabled="!canToggleCanyons"
+            @change="$emit('update:showCanyons', $event.target.checked)"
+        />
+        <span>Show canyon types</span>
+      </label>
+      <div v-if="showCanyons" class="legendScale legendScaleCanyons">
+        <div class="legendCanyonTicks">
+          <span class="legendCanyonTick legendCanyonTick25">0.5</span>
+          <span class="legendCanyonTick legendCanyonTick50">1</span>
+          <span class="legendCanyonTick legendCanyonTick75">2</span>
+        </div>
+        <div class="legendBar legendBarCanyons">
+          <span class="legendBarDivider legendBarDivider25"></span>
+          <span class="legendBarDivider legendBarDivider50"></span>
+          <span class="legendBarDivider legendBarDivider75"></span>
+        </div>
+        <div class="legendCanyonLabels">
+          <span>Open</span>
+          <span>Urban</span>
+          <span>Canyon</span>
+          <span>Dense</span>
         </div>
       </div>
       <div class="legendDivider"></div>
@@ -80,6 +110,7 @@
 
 <script setup>
 import {ref, computed, onMounted, onBeforeUnmount, watch, toRefs} from "vue"
+import {classifyStreetCanyonIndex} from "@/utils/canyons"
 import L from "leaflet"
 import "leaflet/dist/leaflet.css"
 
@@ -96,6 +127,10 @@ const props = defineProps({
     type: Array,
     default: () => []
   },
+  canyonRoads: {
+    type: Array,
+    default: () => []
+  },
   buildings: {
     type: Array,
     default: () => []
@@ -107,6 +142,10 @@ const props = defineProps({
   showRoads: {
     type: Boolean,
     default: true
+  },
+  showCanyons: {
+    type: Boolean,
+    default: false
   },
   showBuildings: {
     type: Boolean,
@@ -122,12 +161,30 @@ const props = defineProps({
   }
 })
 
-const emit = defineEmits(['update:selected', 'update:showRoads', 'update:showBuildings', 'update:showBuildingHeights', 'update:showDensityGrid'])
+const emit = defineEmits([
+  'update:selected',
+  'update:showRoads',
+  'update:showCanyons',
+  'update:showBuildings',
+  'update:showBuildingHeights',
+  'update:showDensityGrid'
+])
 
 const mapEl = ref(null)
 const zoneHalfSideM = computed(() => (Number(props.zoneSideKm) * 1000) / 2)
-const {showRoads, roads, showBuildings, buildings, showBuildingHeights, showDensityGrid, densityGrid} = toRefs(props)
+const {
+  showRoads,
+  showCanyons,
+  roads,
+  canyonRoads,
+  showBuildings,
+  buildings,
+  showBuildingHeights,
+  showDensityGrid,
+  densityGrid
+} = toRefs(props)
 const canToggleRoads = computed(() => roads.value.length > 0)
+const canToggleCanyons = computed(() => canyonRoads.value.length > 0)
 const canToggleBuildings = computed(() => buildings.value.length > 0)
 const canToggleDensityGrid = computed(() => densityGrid.value.length > 0)
 const heightRange = computed(() => {
@@ -146,6 +203,7 @@ let map = null
 let centerDot = null
 let square = null
 let roadLayers = L.layerGroup()
+let canyonLayers = L.layerGroup()
 let buildingLayers = L.layerGroup()
 let densityGridLayers = L.layerGroup()
 
@@ -164,6 +222,23 @@ function getSpeedColor(speed) {
   const t = Math.max(0, Math.min(1, (speed - minS) / (maxS - minS)))
   const hue = (1 - t) * 240
   return `hsl(${hue}, 100%, 50%)`
+}
+
+function getCanyonColor(index) {
+  const cls = classifyStreetCanyonIndex(index)
+  if (cls === "open") return "#2ECC71"
+  if (cls === "urban") return "#F1C40F"
+  if (cls === "canyon") return "#E67E22"
+  if (cls === "dense") return "#C0392B"
+  return "#7F8C8D"
+}
+
+function canyonLabel(cls) {
+  if (cls === "open") return "open"
+  if (cls === "urban") return "urban"
+  if (cls === "canyon") return "street canyon"
+  if (cls === "dense") return "dense canyon"
+  return "unknown"
 }
 
 function updateLayers(fit = true) {
@@ -210,6 +285,32 @@ function updateLayers(fit = true) {
         sticky: true,
         opacity: 0.9
       })
+    })
+  }
+
+  canyonLayers.clearLayers()
+  if (props.showCanyons) {
+    props.canyonRoads.forEach(road => {
+      if (!Array.isArray(road.geometry) || road.geometry.length < 2) return
+      const color = getCanyonColor(road.canyonIndex)
+      const cls = classifyStreetCanyonIndex(road.canyonIndex)
+      const line = L.polyline(road.geometry, {
+        color,
+        weight: 6,
+        opacity: 0.75,
+        lineJoin: "round"
+      }).addTo(canyonLayers)
+      const h = formatNumber(road.canyonHeight, 1)
+      const w = formatNumber(road.canyonWidth, 1)
+      const idx = formatNumber(road.canyonIndex, 2)
+      line.bindTooltip(
+          `Canyon index: ${idx}<br/>Class: ${canyonLabel(cls)}<br/>H: ${h} m<br/>W: ${w} m`,
+          {
+            direction: "top",
+            sticky: true,
+            opacity: 0.9
+          }
+      )
     })
   }
 
@@ -281,6 +382,12 @@ function formatSpeed(value) {
   return value.toFixed(0)
 }
 
+function formatNumber(value, digits) {
+  if (!Number.isFinite(value)) return "-"
+  const d = Number.isFinite(digits) ? digits : 1
+  return value.toFixed(d)
+}
+
 function heightToColor(height, min, max) {
   if (!Number.isFinite(height) || !Number.isFinite(min) || !Number.isFinite(max) || max <= min || height <= 0) {
     return "#F5C542"
@@ -317,6 +424,7 @@ onMounted(() => {
   }).addTo(map)
 
   roadLayers.addTo(map)
+  canyonLayers.addTo(map)
   buildingLayers.addTo(map)
   densityGridLayers.addTo(map)
 
@@ -351,6 +459,14 @@ watch(() => props.roads, () => {
 }, {deep: true})
 
 watch(() => props.showRoads, () => {
+  updateLayers(false)
+})
+
+watch(() => props.canyonRoads, () => {
+  updateLayers(false)
+}, {deep: true})
+
+watch(() => props.showCanyons, () => {
   updateLayers(false)
 })
 
@@ -398,7 +514,7 @@ watch(() => props.showDensityGrid, () => {
   background: rgba(8, 8, 10, 0.72);
   color: rgba(255, 255, 255, 0.9);
   display: grid;
-  gap: 8px;
+  gap: 5px;
   backdrop-filter: blur(8px);
 }
 
@@ -444,6 +560,45 @@ watch(() => props.showDensityGrid, () => {
   background: linear-gradient(90deg, hsla(220, 90%, 55%, 0.4), hsla(0, 90%, 55%, 0.8));
 }
 
+.legendScaleCanyons {
+  gap: 6px;
+}
+
+.legendBarCanyons {
+  position: relative;
+  background: linear-gradient(
+    90deg,
+    #2ECC71 0%,
+    #2ECC71 25%,
+    #F1C40F 25%,
+    #F1C40F 50%,
+    #E67E22 50%,
+    #E67E22 75%,
+    #C0392B 75%,
+    #C0392B 100%
+  );
+}
+
+.legendBarDivider {
+  position: absolute;
+  top: -1px;
+  bottom: -1px;
+  width: 1px;
+  background: rgba(255, 255, 255, 0.55);
+}
+
+.legendBarDivider25 {
+  left: 25%;
+}
+
+.legendBarDivider50 {
+  left: 50%;
+}
+
+.legendBarDivider75 {
+  left: 75%;
+}
+
 .legendRange {
   display: flex;
   justify-content: space-between;
@@ -472,9 +627,44 @@ watch(() => props.showDensityGrid, () => {
   border: 1px solid rgba(255, 255, 255, 0.2);
 }
 
+.legendCanyonTicks {
+  position: relative;
+  height: 12px;
+  font-size: 9px;
+  opacity: 0.75;
+}
+
+.legendCanyonTick {
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%);
+}
+
+.legendCanyonTick25 {
+  left: 25%;
+}
+
+.legendCanyonTick50 {
+  left: 50%;
+}
+
+.legendCanyonTick75 {
+  left: 75%;
+}
+
+.legendCanyonLabels {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 4px;
+  font-size: 9px;
+  opacity: 0.75;
+  text-align: center;
+}
+
 @media (max-width: 900px) {
   .mapWrap {
     height: 65vh;
   }
 }
 </style>
+

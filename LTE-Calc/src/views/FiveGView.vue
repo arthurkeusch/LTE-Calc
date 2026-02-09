@@ -12,6 +12,7 @@
         :buildingHeightStats="buildingHeightStats"
         :buildingHeightLoading="buildingHeightLoading"
         :buildingHeightError="buildingHeightError"
+        :canyonStats="canyonStats"
         :densityStats="densityStats"
         :anyLoading="anyLoading"
         :loadingProgress="loadingProgress"
@@ -24,11 +25,13 @@
     <FiveGMap
         v-model:selected="selected"
         v-model:showRoads="showRoads"
+        v-model:showCanyons="showCanyons"
         v-model:showBuildings="showBuildings"
         v-model:showBuildingHeights="showBuildingHeights"
         v-model:showDensityGrid="showDensityGrid"
         :zoneSideKm="zoneSideKm"
         :roads="roadsData"
+        :canyonRoads="canyonRoads"
         :buildings="buildingsData"
         :densityGrid="densityGrid"
     />
@@ -53,11 +56,13 @@ import {
   computeHeightStats,
   applyAltimetryHeights
 } from "@/utils/buildings"
+import {computeStreetCanyonStats} from "@/utils/canyons"
 import {areaCacheKey} from "@/utils/cacheKeys"
 
 const zoneSideKm = ref(1.0)
 const selected = ref(null)
 const showRoads = ref(true)
+const showCanyons = ref(false)
 const showBuildings = ref(true)
 const showBuildingHeights = ref(true)
 const showDensityGrid = ref(false)
@@ -76,6 +81,8 @@ const buildingHeightLoading = ref(false)
 const buildingHeightError = ref(null)
 const densityStats = ref(null)
 const densityGrid = ref([])
+const canyonStats = ref(null)
+const canyonRoads = ref([])
 const speedProgress = ref(0)
 const buildingProgress = ref(0)
 const heightProgress = ref(0)
@@ -142,6 +149,7 @@ let debounceTimer = null
 let lastDensityKey = null
 let lastDensityCount = 0
 let cacheStatsTimer = null
+let canyonTimer = null
 
 function scheduleCacheStatsRefresh() {
   if (cacheStatsTimer) clearTimeout(cacheStatsTimer)
@@ -325,7 +333,7 @@ function scheduleSpeedRefresh() {
         }
         const addToCacheBuffer = (building) => {
           if (!building || building.id === undefined || building.id === null) return
-          if (!Number.isFinite(building.height) || building.height <= 0) return
+          if (!Number.isFinite(building.height)) return
           if (cachedIds.has(building.id)) return
           cachedIds.add(building.id)
           cacheBuffer[building.id] = building.height
@@ -338,7 +346,7 @@ function scheduleSpeedRefresh() {
           withCached = rawBuildings.map((b) => {
             const cached = partialHeights?.[b.id]
             const cachedNum = Number(cached)
-            if (Number.isFinite(cachedNum) && cachedNum > 0) return {...b, height: cachedNum}
+            if (Number.isFinite(cachedNum)) return {...b, height: cachedNum}
             return b
           })
           buildingsData.value = withCached
@@ -351,25 +359,28 @@ function scheduleSpeedRefresh() {
         withCached = rawBuildings.map((b) => {
           const cached = cachedHeights?.[b.id]
           const cachedNum = Number(cached)
-          if (Number.isFinite(cachedNum) && cachedNum > 0) return {...b, height: cachedNum}
+          if (Number.isFinite(cachedNum)) return {...b, height: cachedNum}
           return b
         })
         buildingsData.value = withCached
 
-        const missing = withCached.filter(b => !Number.isFinite(b.height) || b.height <= 0)
+        const missing = withCached.filter(b => !Number.isFinite(b.height))
         if (missing.length === 0) {
           const heightValues = withCached.map(b => b.height).filter(n => Number.isFinite(n))
           buildingHeightStats.value = computeHeightStats(heightValues)
           heightProgress.value = 1
           return
         }
+
         try {
           const mergedMissing = await applyAltimetryHeights(missing, aborter.signal, (partial, progress) => {
             const partialMap = new Map(partial.map(b => [b.id, b]))
             const mergedPartial = withCached.map(b => partialMap.get(b.id) || b)
             buildingsData.value = mergedPartial
             const partialHeights = mergedPartial.map(b => b.height).filter(n => Number.isFinite(n))
-            buildingHeightStats.value = computeHeightStats(partialHeights)
+            if (partialHeights.length > 0) {
+              buildingHeightStats.value = computeHeightStats(partialHeights)
+            }
             if (Number.isFinite(progress)) {
               heightProgress.value = Math.max(0.35, 0.35 + progress * 0.65)
             }
@@ -410,6 +421,20 @@ function scheduleSpeedRefresh() {
 }
 
 watch([selected, zoneSideKm], scheduleSpeedRefresh, {deep: true})
+
+watch([roadsData, buildingsData, selected], () => {
+  if (!selected.value) {
+    canyonStats.value = null
+    canyonRoads.value = []
+    return
+  }
+  if (canyonTimer) clearTimeout(canyonTimer)
+  canyonTimer = setTimeout(() => {
+    const result = computeStreetCanyonStats(roadsData.value, buildingsData.value, selected.value)
+    canyonStats.value = result?.stats || null
+    canyonRoads.value = Array.isArray(result?.roads) ? result.roads : []
+  }, 250)
+}, {deep: true})
 
 watch([buildingsData, selected, zoneSideKm], async () => {
   if (!selected.value) {
