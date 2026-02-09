@@ -1,31 +1,141 @@
-import {areaCacheKey} from "./cacheKeys"
-import {computeSquareBounds, delay} from "./shared"
+import {
+    boundsFromCells,
+    buildMercatorCells,
+    clipPolylineToBounds,
+    computeSquareBounds,
+    delay,
+    mercatorCellIndex
+} from "./shared"
 
 const OVERPASS_PRIMARY = "https://overpass-api.de/api/interpreter"
 const OVERPASS_RETRIES = 3
 const OVERPASS_RETRY_DELAY_MS = 500
+const ROAD_CELL_SIZE_M = 1000
+const ROAD_CACHE_VERSION = 1
+const ROAD_CACHE_BATCH = 500
+const ROAD_CACHE_STORE_BATCH = 500
 const BACKEND_BASE_URL = "https://lte-calc.arthur-keusch.fr:3000"
 const CACHE_ROADS_ENDPOINT = `${BACKEND_BASE_URL}/cache/roads`
 const CACHE_ROADS_STORE_ENDPOINT = `${BACKEND_BASE_URL}/cache/roads/store`
 
 export async function fetchRoadSpeedsInSquare(lat, lng, sideKm, signal) {
-    const cacheKey = areaCacheKey(lat, lng, sideKm)
-    const cached = await loadRoadsFromCache(cacheKey, signal)
-    if (cached) return cached
-
     const {south, west, north, east} = computeSquareBounds(lat, lng, sideKm)
+    const cells = buildRoadCells({south, west, north, east})
+    if (!cells.length) return {speeds: [], roads: []}
 
+    const keys = cells.map(c => c.key)
+    let cached = {}
+    try {
+        cached = await loadRoadCellsFromCache(keys, signal)
+    } catch (err) {
+        if (err?.name === "AbortError") throw err
+    }
+
+    for (const cell of cells) {
+        const entry = cached?.[cell.key]
+        if (!entry || typeof entry !== "object") continue
+        if (Array.isArray(entry.roads)) {
+            cell.roads = entry.roads
+            cell.cached = true
+        }
+    }
+
+    const missing = cells.filter(c => !Array.isArray(c.roads))
+    if (missing.length) {
+        await fillRoadCellsFromOverpass(missing, signal)
+    }
+
+    const toStore = {}
+    for (const cell of cells) {
+        if (cell.cached) continue
+        if (!Array.isArray(cell.roads)) cell.roads = []
+        toStore[cell.key] = {roads: cell.roads}
+    }
+    await saveRoadCellsToCache(toStore, signal)
+
+    const roadMap = new Map()
+    for (const cell of cells) {
+        for (const road of cell.roads || []) {
+            if (!road || road.id === undefined || road.id === null) continue
+            if (!roadMap.has(road.id)) roadMap.set(road.id, road)
+        }
+    }
+    const bounds = {south, west, north, east}
+    const roads = []
+    for (const road of roadMap.values()) {
+        const clipped = clipPolylineToBounds(road.geometry, bounds)
+        if (!Array.isArray(clipped) || clipped.length < 2) continue
+        roads.push({...road, geometry: clipped})
+    }
+    const speeds = roads.map(r => r.speed).filter(n => Number.isFinite(n))
+    return {speeds, roads}
+}
+
+function buildRoadCells(bounds) {
+    const cells = buildMercatorCells(bounds, ROAD_CELL_SIZE_M, roadCellKey)
+    return cells.map(c => ({...c, roads: null, cached: false}))
+}
+
+async function loadRoadCellsFromCache(keys, signal) {
+    if (!Array.isArray(keys) || keys.length === 0) return {}
+    const out = {}
+    for (let i = 0; i < keys.length; i += ROAD_CACHE_BATCH) {
+        const batch = keys.slice(i, i + ROAD_CACHE_BATCH)
+        try {
+            const res = await fetch(CACHE_ROADS_ENDPOINT, {
+                method: "POST",
+                headers: {"Content-Type": "application/json"},
+                body: JSON.stringify({keys: batch}),
+                signal
+            })
+            if (!res.ok) continue
+            const json = await res.json().catch(() => null)
+            const cells = json?.cells
+            if (cells && typeof cells === "object") {
+                Object.assign(out, cells)
+            }
+        } catch (err) {
+            if (err?.name === "AbortError") throw err
+        }
+    }
+    return out
+}
+
+async function saveRoadCellsToCache(cells, signal) {
+    if (!cells || typeof cells !== "object") return
+    const entries = Object.entries(cells)
+    if (!entries.length) return
+    for (let i = 0; i < entries.length; i += ROAD_CACHE_STORE_BATCH) {
+        const batch = Object.fromEntries(entries.slice(i, i + ROAD_CACHE_STORE_BATCH))
+        try {
+            await fetch(CACHE_ROADS_STORE_ENDPOINT, {
+                method: "POST",
+                headers: {"Content-Type": "application/json"},
+                body: JSON.stringify({cells: batch}),
+                signal
+            })
+        } catch (err) {
+            if (err?.name === "AbortError") throw err
+        }
+    }
+}
+
+async function fillRoadCellsFromOverpass(cells, signal) {
+    if (!Array.isArray(cells) || cells.length === 0) return
+    const bounds = boundsFromCells(cells)
+    if (!bounds) {
+        for (const cell of cells) cell.roads = []
+        return
+    }
     const query = `[out:json][timeout:25];
 (
-  way["highway"](${south},${west},${north},${east});
+  way["highway"](${bounds.south},${bounds.west},${bounds.north},${bounds.east});
 );
 out tags geom;`
 
     const json = await fetchOverpassJson(query, signal)
     const els = Array.isArray(json?.elements) ? json.elements : []
-
     const roads = []
-    const speeds = []
     for (const el of els) {
         if (el.type !== "way") continue
         const tags = el?.tags || {}
@@ -34,58 +144,26 @@ out tags geom;`
         const s = speedFromTags(tags, highway)
         const lanes = parseLanes(tags.lanes)
         const width = parseWidth(tags.width)
-        if (Number.isFinite(s) && s > 0) {
-            speeds.push(s)
-            if (el.geometry) {
-                roads.push({
-                    id: el.id,
-                    speed: s,
-                    geometry: el.geometry.map(p => [p.lat, p.lon]),
-                    lanes,
-                    width,
-                    highway
-                })
-            }
+        if (Number.isFinite(s) && s > 0 && Array.isArray(el.geometry)) {
+            roads.push({
+                id: el.id,
+                speed: s,
+                geometry: el.geometry.map(p => [p.lat, p.lon]),
+                lanes,
+                width,
+                highway
+            })
         }
     }
 
-    const result = {speeds, roads}
-    await saveRoadsToCache(cacheKey, result, signal)
-    return result
-}
-
-async function loadRoadsFromCache(cacheKey, signal) {
-    if (!cacheKey) return null
-    try {
-        const res = await fetch(CACHE_ROADS_ENDPOINT, {
-            method: "POST",
-            headers: {"Content-Type": "application/json"},
-            body: JSON.stringify({key: cacheKey}),
-            signal
-        })
-        if (!res.ok) return null
-        const json = await res.json().catch(() => ({}))
-        const data = json?.data
-        if (!json?.hit || !data) return null
-        if (!Array.isArray(data.roads) || !Array.isArray(data.speeds)) return null
-        return data
-    } catch (err) {
-        if (err?.name === "AbortError") throw err
-        return null
-    }
-}
-
-async function saveRoadsToCache(cacheKey, data, signal) {
-    if (!cacheKey || !data) return
-    try {
-        await fetch(CACHE_ROADS_STORE_ENDPOINT, {
-            method: "POST",
-            headers: {"Content-Type": "application/json"},
-            body: JSON.stringify({key: cacheKey, data}),
-            signal
-        })
-    } catch {
-        return
+    const cellMap = new Map(cells.map(cell => [cell.key, cell]))
+    for (const cell of cells) cell.roads = []
+    for (const road of roads) {
+        const keys = roadCellKeys(road.geometry)
+        for (const key of keys) {
+            const cell = cellMap.get(key)
+            if (cell) cell.roads.push(road)
+        }
     }
 }
 
@@ -193,6 +271,26 @@ function parseWidth(v) {
 
 function clamp(x, a, b) {
     return Math.max(a, Math.min(b, x))
+}
+
+function roadCellKey(ix, iy) {
+    return `rd${ROAD_CACHE_VERSION}:${ROAD_CELL_SIZE_M}:${ix}:${iy}`
+}
+
+function roadCellIndex(lat, lng) {
+    const idx = mercatorCellIndex(lat, lng, ROAD_CELL_SIZE_M)
+    if (!idx) return null
+    return {...idx, key: roadCellKey(idx.ix, idx.iy)}
+}
+
+function roadCellKeys(geometry) {
+    const keys = new Set()
+    const pts = Array.isArray(geometry) ? geometry : []
+    for (const p of pts) {
+        const idx = roadCellIndex(p[0], p[1])
+        if (idx?.key) keys.add(idx.key)
+    }
+    return keys
 }
 
 export function computeSpeedStats(values) {

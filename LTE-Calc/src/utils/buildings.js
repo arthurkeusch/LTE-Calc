@@ -1,9 +1,24 @@
 const OVERPASS_PRIMARY = "https://overpass-api.de/api/interpreter"
-import {areaCacheKey} from "./cacheKeys"
-import {computeSquareBounds, delay, runWithConcurrencyLimit} from "./shared"
+import {
+    boundsFromCells,
+    buildMercatorCells,
+    clipPolygonToBounds,
+    computeSquareBounds,
+    delay,
+    mercatorCellIndex,
+    runWithConcurrencyLimit
+} from "./shared"
 
 const OVERPASS_RETRIES = 3
 const OVERPASS_RETRY_DELAY_MS = 500
+const BUILDING_CELL_SIZE_M = 500
+const BUILDING_CACHE_VERSION = 1
+const BUILDING_CACHE_BATCH = 500
+const BUILDING_CACHE_STORE_BATCH = 500
+export const DENSITY_CELL_SIZE_M = 100
+const DENSITY_CACHE_VERSION = 1
+const DENSITY_CACHE_BATCH = 1000
+const DENSITY_CACHE_STORE_BATCH = 1000
 const BACKEND_BASE_URL = "https://lte-calc.arthur-keusch.fr:3000"
 const CACHE_BUILDING_HEIGHTS_ENDPOINT = `${BACKEND_BASE_URL}/cache/building-heights`
 const CACHE_BUILDING_HEIGHTS_STORE_ENDPOINT = `${BACKEND_BASE_URL}/cache/building-heights/store`
@@ -23,110 +38,151 @@ const ALTI_RETRIES = 3
 const ALTI_RETRY_DELAY_MS = 500
 
 export async function fetchBuildingsInSquare(lat, lng, sideKm, signal) {
-    const cacheKey = areaCacheKey(lat, lng, sideKm)
-    const cached = await loadBuildingsFromCache(cacheKey, signal)
-    if (cached) return cached
-
     const {south, west, north, east} = computeSquareBounds(lat, lng, sideKm)
+    const cells = buildBuildingCells({south, west, north, east})
+    if (!cells.length) return {areas: [], buildings: []}
 
-    const query = `[out:json][timeout:25];
-(
-  way["building"](${south},${west},${north},${east});
-);
-out tags geom;`
+    const keys = cells.map(c => c.key)
+    let cached = {}
+    try {
+        cached = await loadBuildingsFromCache(keys, signal)
+    } catch (err) {
+        if (err?.name === "AbortError") throw err
+    }
 
-    const json = await fetchOverpassJson(query, signal)
-    const els = Array.isArray(json?.elements) ? json.elements : []
-
-    const buildings = []
-    const areas = []
-    for (const el of els) {
-        if (el.type !== "way") continue
-        if (!el.geometry || el.geometry.length < 3) continue
-        const geometry = el.geometry.map(p => [p.lat, p.lon])
-        const area = polygonAreaMeters2(geometry)
-        if (Number.isFinite(area) && area > 0) {
-            buildings.push({
-                id: el.id,
-                area,
-                geometry
-            })
-            areas.push(area)
+    for (const cell of cells) {
+        const entry = cached?.[cell.key]
+        if (!entry || typeof entry !== "object") continue
+        if (Array.isArray(entry.buildings)) {
+            cell.buildings = entry.buildings
+            cell.cached = true
         }
     }
 
-    const result = {areas, buildings}
-    await saveBuildingsToCache(cacheKey, result, signal)
-    return result
+    const missing = cells.filter(c => !Array.isArray(c.buildings))
+    if (missing.length) {
+        await fillBuildingCellsFromOverpass(missing, signal)
+    }
+
+    const toStore = {}
+    for (const cell of cells) {
+        if (cell.cached) continue
+        if (!Array.isArray(cell.buildings)) cell.buildings = []
+        toStore[cell.key] = {buildings: cell.buildings}
+    }
+    await saveBuildingsToCache(toStore, signal)
+
+    const buildingMap = new Map()
+    for (const cell of cells) {
+        for (const building of cell.buildings || []) {
+            if (!building || building.id === undefined || building.id === null) continue
+            if (!buildingMap.has(building.id)) buildingMap.set(building.id, building)
+        }
+    }
+    const bounds = {south, west, north, east}
+    const buildings = []
+    const areas = []
+    for (const building of buildingMap.values()) {
+        const clipped = clipPolygonToBounds(building.geometry, bounds)
+        if (!Array.isArray(clipped) || clipped.length < 3) continue
+        const area = polygonAreaMeters2(clipped)
+        if (!Number.isFinite(area) || area <= 0) continue
+        buildings.push({...building, geometry: clipped, area})
+        areas.push(area)
+    }
+    return {areas, buildings}
 }
 
-async function loadBuildingsFromCache(cacheKey, signal) {
-    if (!cacheKey) return null
-    try {
-        const res = await fetch(CACHE_BUILDINGS_ENDPOINT, {
-            method: "POST",
-            headers: {"Content-Type": "application/json"},
-            body: JSON.stringify({key: cacheKey}),
-            signal
-        })
-        if (!res.ok) return null
-        const json = await res.json().catch(() => ({}))
-        const data = json?.data
-        if (!json?.hit || !data) return null
-        if (!Array.isArray(data.buildings) || !Array.isArray(data.areas)) return null
-        return data
-    } catch (err) {
-        if (err?.name === "AbortError") throw err
-        return null
+function buildBuildingCells(bounds) {
+    const cells = buildMercatorCells(bounds, BUILDING_CELL_SIZE_M, buildingCellKey)
+    return cells.map(c => ({...c, buildings: null, cached: false}))
+}
+
+async function loadBuildingsFromCache(keys, signal) {
+    if (!Array.isArray(keys) || keys.length === 0) return {}
+    const out = {}
+    for (let i = 0; i < keys.length; i += BUILDING_CACHE_BATCH) {
+        const batch = keys.slice(i, i + BUILDING_CACHE_BATCH)
+        try {
+            const res = await fetch(CACHE_BUILDINGS_ENDPOINT, {
+                method: "POST",
+                headers: {"Content-Type": "application/json"},
+                body: JSON.stringify({keys: batch}),
+                signal
+            })
+            if (!res.ok) continue
+            const json = await res.json().catch(() => null)
+            const cells = json?.cells
+            if (cells && typeof cells === "object") {
+                Object.assign(out, cells)
+            }
+        } catch (err) {
+            if (err?.name === "AbortError") throw err
+        }
+    }
+    return out
+}
+
+async function saveBuildingsToCache(cells, signal) {
+    if (!cells || typeof cells !== "object") return
+    const entries = Object.entries(cells)
+    if (!entries.length) return
+    for (let i = 0; i < entries.length; i += BUILDING_CACHE_STORE_BATCH) {
+        const batch = Object.fromEntries(entries.slice(i, i + BUILDING_CACHE_STORE_BATCH))
+        try {
+            await fetch(CACHE_BUILDINGS_STORE_ENDPOINT, {
+                method: "POST",
+                headers: {"Content-Type": "application/json"},
+                body: JSON.stringify({cells: batch}),
+                signal
+            })
+        } catch (err) {
+            if (err?.name === "AbortError") throw err
+        }
     }
 }
 
-async function saveBuildingsToCache(cacheKey, data, signal) {
-    if (!cacheKey || !data) return
-    try {
-        await fetch(CACHE_BUILDINGS_STORE_ENDPOINT, {
-            method: "POST",
-            headers: {"Content-Type": "application/json"},
-            body: JSON.stringify({key: cacheKey, data}),
-            signal
-        })
-    } catch {
-        return
+export async function loadDensityFromCache(keys, signal) {
+    if (!Array.isArray(keys) || keys.length === 0) return {}
+    const out = {}
+    for (let i = 0; i < keys.length; i += DENSITY_CACHE_BATCH) {
+        const batch = keys.slice(i, i + DENSITY_CACHE_BATCH)
+        try {
+            const res = await fetch(CACHE_DENSITY_ENDPOINT, {
+                method: "POST",
+                headers: {"Content-Type": "application/json"},
+                body: JSON.stringify({keys: batch}),
+                signal
+            })
+            if (!res.ok) continue
+            const json = await res.json().catch(() => null)
+            const cells = json?.cells
+            if (cells && typeof cells === "object") {
+                Object.assign(out, cells)
+            }
+        } catch (err) {
+            if (err?.name === "AbortError") throw err
+        }
     }
+    return out
 }
 
-export async function loadDensityFromCache(cacheKey, signal) {
-    if (!cacheKey) return null
-    try {
-        const res = await fetch(CACHE_DENSITY_ENDPOINT, {
-            method: "POST",
-            headers: {"Content-Type": "application/json"},
-            body: JSON.stringify({key: cacheKey}),
-            signal
-        })
-        if (!res.ok) return null
-        const json = await res.json().catch(() => ({}))
-        const data = json?.data
-        if (!json?.hit || !data) return null
-        if (!Array.isArray(data.cells)) return null
-        return data
-    } catch (err) {
-        if (err?.name === "AbortError") throw err
-        return null
-    }
-}
-
-export async function saveDensityToCache(cacheKey, data, signal) {
-    if (!cacheKey || !data) return
-    try {
-        await fetch(CACHE_DENSITY_STORE_ENDPOINT, {
-            method: "POST",
-            headers: {"Content-Type": "application/json"},
-            body: JSON.stringify({key: cacheKey, data}),
-            signal
-        })
-    } catch {
-        return
+export async function saveDensityToCache(cells, signal) {
+    if (!cells || typeof cells !== "object") return
+    const entries = Object.entries(cells)
+    if (!entries.length) return
+    for (let i = 0; i < entries.length; i += DENSITY_CACHE_STORE_BATCH) {
+        const batch = Object.fromEntries(entries.slice(i, i + DENSITY_CACHE_STORE_BATCH))
+        try {
+            await fetch(CACHE_DENSITY_STORE_ENDPOINT, {
+                method: "POST",
+                headers: {"Content-Type": "application/json"},
+                body: JSON.stringify({cells: batch}),
+                signal
+            })
+        } catch (err) {
+            if (err?.name === "AbortError") throw err
+        }
     }
 }
 
@@ -326,6 +382,17 @@ export function computeDensityStats(values) {
     }
 }
 
+export function buildDensityCells(bounds) {
+    const cells = buildMercatorCells(bounds, DENSITY_CELL_SIZE_M, densityCellKey)
+    return cells.map(c => ({...c, count: null, score: null, cached: false}))
+}
+
+export function densityCellIndex(lat, lng) {
+    const idx = mercatorCellIndex(lat, lng, DENSITY_CELL_SIZE_M)
+    if (!idx) return null
+    return {...idx, key: densityCellKey(idx.ix, idx.iy)}
+}
+
 export async function applyAltimetryHeights(buildings, signal, onProgress) {
     if (!Array.isArray(buildings) || buildings.length === 0) return buildings || []
     let next = buildings.slice()
@@ -447,6 +514,48 @@ export async function applyAltimetryHeights(buildings, signal, onProgress) {
         }
     }
     return next
+}
+
+async function fillBuildingCellsFromOverpass(cells, signal) {
+    if (!Array.isArray(cells) || cells.length === 0) return
+    const bounds = boundsFromCells(cells)
+    if (!bounds) {
+        for (const cell of cells) cell.buildings = []
+        return
+    }
+    const query = `[out:json][timeout:25];
+(
+  way["building"](${bounds.south},${bounds.west},${bounds.north},${bounds.east});
+);
+out tags geom;`
+
+    const json = await fetchOverpassJson(query, signal)
+    const els = Array.isArray(json?.elements) ? json.elements : []
+    const buildings = []
+    for (const el of els) {
+        if (el.type !== "way") continue
+        if (!el.geometry || el.geometry.length < 3) continue
+        const geometry = el.geometry.map(p => [p.lat, p.lon])
+        const area = polygonAreaMeters2(geometry)
+        if (Number.isFinite(area) && area > 0) {
+            buildings.push({
+                id: el.id,
+                area,
+                geometry
+            })
+        }
+    }
+
+    const cellMap = new Map(cells.map(cell => [cell.key, cell]))
+    for (const cell of cells) cell.buildings = []
+    for (const building of buildings) {
+        const c = polygonCentroidLatLng(building.geometry)
+        if (!c) continue
+        const idx = buildingCellIndex(c.lat, c.lng)
+        if (!idx) continue
+        const cell = cellMap.get(idx.key)
+        if (cell) cell.buildings.push(building)
+    }
 }
 
 async function fetchOverpassJson(query, signal) {
@@ -572,6 +681,20 @@ function heightFromAltimetry(e) {
     if (Number.isFinite(mnh)) return mnh
     if (Number.isFinite(mns) && Number.isFinite(mnt)) return mns - mnt
     return null
+}
+
+function buildingCellKey(ix, iy) {
+    return `b${BUILDING_CACHE_VERSION}:${BUILDING_CELL_SIZE_M}:${ix}:${iy}`
+}
+
+function densityCellKey(ix, iy) {
+    return `d${DENSITY_CACHE_VERSION}:${DENSITY_CELL_SIZE_M}:${ix}:${iy}`
+}
+
+function buildingCellIndex(lat, lng) {
+    const idx = mercatorCellIndex(lat, lng, BUILDING_CELL_SIZE_M)
+    if (!idx) return null
+    return {...idx, key: buildingCellKey(idx.ix, idx.iy)}
 }
 
 export function polygonAreaMeters2(latlngs) {

@@ -176,72 +176,186 @@ app.post("/cache/building-heights/store", async (req, res) => {
 });
 
 app.post("/cache/roads", async (req, res) => {
-    const key = normalizeCacheKey(req.body?.key);
-    if (!key) return res.json({hit: false});
-    const value = await redis.get(cacheKey(CACHE_PREFIX_ROADS, key));
-    if (!value) return res.json({hit: false});
-    try {
-        const data = JSON.parse(value);
-        return res.json({hit: true, data});
-    } catch {
-        return res.json({hit: false});
+    const keys = Array.isArray(req.body?.keys) ? req.body.keys : [];
+    const single = normalizeCacheKey(req.body?.key);
+    const list = keys.length ? keys : (single ? [single] : []);
+    if (!list.length) return res.json(keys.length ? {cells: {}} : {hit: false});
+
+    if (!keys.length && list.length === 1) {
+        const value = await redis.get(cacheKey(CACHE_PREFIX_ROADS, single));
+        if (!value) return res.json({hit: false});
+        try {
+            const data = JSON.parse(value);
+            return res.json({hit: true, data});
+        } catch {
+            return res.json({hit: false});
+        }
     }
+
+    const redisKeys = list.map((k) => cacheKey(CACHE_PREFIX_ROADS, normalizeCacheKey(k)));
+    const values = await redis.mGet(redisKeys);
+    const cells = {};
+    for (let i = 0; i < list.length; i++) {
+        const raw = values[i];
+        if (!raw) continue;
+        try {
+            const data = JSON.parse(raw);
+            if (data && typeof data === "object") {
+                cells[list[i]] = data;
+            }
+        } catch {
+            // ignore invalid cache entries
+        }
+    }
+    res.json({cells});
 });
 
 app.post("/cache/roads/store", async (req, res) => {
-    const key = normalizeCacheKey(req.body?.key);
-    const data = req.body?.data;
-    if (!key || !data || typeof data !== "object") {
+    const payload = req.body?.cells;
+    const singleKey = normalizeCacheKey(req.body?.key);
+    const singleData = req.body?.data;
+    const cells = payload && typeof payload === "object"
+        ? payload
+        : (singleKey && singleData && typeof singleData === "object" ? {[singleKey]: singleData} : null);
+
+    if (!cells || typeof cells !== "object") {
         return res.status(400).json({error: "Invalid roads payload"});
     }
-    await redis.set(cacheKey(CACHE_PREFIX_ROADS, key), JSON.stringify(data), {EX: CACHE_TTL_SECONDS});
-    res.json({stored: true});
+    const entries = Object.entries(cells);
+    if (!entries.length) return res.json({stored: 0});
+
+    const pipeline = redis.multi();
+    let stored = 0;
+    for (const [key, data] of entries) {
+        const k = normalizeCacheKey(key);
+        if (!k || !data || typeof data !== "object") continue;
+        pipeline.set(cacheKey(CACHE_PREFIX_ROADS, k), JSON.stringify(data), {EX: CACHE_TTL_SECONDS});
+        stored++;
+    }
+    if (stored) await pipeline.exec();
+    res.json({stored});
 });
 
 app.post("/cache/buildings", async (req, res) => {
-    const key = normalizeCacheKey(req.body?.key);
-    if (!key) return res.json({hit: false});
-    const value = await redis.get(cacheKey(CACHE_PREFIX_BUILDINGS, key));
-    if (!value) return res.json({hit: false});
-    try {
-        const data = JSON.parse(value);
-        return res.json({hit: true, data});
-    } catch {
-        return res.json({hit: false});
+    const keys = Array.isArray(req.body?.keys) ? req.body.keys : [];
+    const single = normalizeCacheKey(req.body?.key);
+    const list = keys.length ? keys : (single ? [single] : []);
+    if (!list.length) return res.json(keys.length ? {cells: {}} : {hit: false});
+
+    if (!keys.length && list.length === 1) {
+        const value = await redis.get(cacheKey(CACHE_PREFIX_BUILDINGS, single));
+        if (!value) return res.json({hit: false});
+        try {
+            const data = JSON.parse(value);
+            return res.json({hit: true, data});
+        } catch {
+            return res.json({hit: false});
+        }
     }
+
+    const redisKeys = list.map((k) => cacheKey(CACHE_PREFIX_BUILDINGS, normalizeCacheKey(k)));
+    const values = await redis.mGet(redisKeys);
+    const cells = {};
+    for (let i = 0; i < list.length; i++) {
+        const raw = values[i];
+        if (!raw) continue;
+        try {
+            const data = JSON.parse(raw);
+            if (data && typeof data === "object") {
+                cells[list[i]] = data;
+            }
+        } catch {
+            // ignore invalid cache entries
+        }
+    }
+    res.json({cells});
 });
 
 app.post("/cache/buildings/store", async (req, res) => {
-    const key = normalizeCacheKey(req.body?.key);
-    const data = req.body?.data;
-    if (!key || !data || typeof data !== "object") {
+    const payload = req.body?.cells;
+    const singleKey = normalizeCacheKey(req.body?.key);
+    const singleData = req.body?.data;
+    const cells = payload && typeof payload === "object"
+        ? payload
+        : (singleKey && singleData && typeof singleData === "object" ? {[singleKey]: singleData} : null);
+
+    if (!cells || typeof cells !== "object") {
         return res.status(400).json({error: "Invalid buildings payload"});
     }
-    await redis.set(cacheKey(CACHE_PREFIX_BUILDINGS, key), JSON.stringify(data), {EX: CACHE_TTL_SECONDS});
-    res.json({stored: true});
+    const entries = Object.entries(cells);
+    if (!entries.length) return res.json({stored: 0});
+
+    const pipeline = redis.multi();
+    let stored = 0;
+    for (const [key, data] of entries) {
+        const k = normalizeCacheKey(key);
+        if (!k || !data || typeof data !== "object") continue;
+        pipeline.set(cacheKey(CACHE_PREFIX_BUILDINGS, k), JSON.stringify(data), {EX: CACHE_TTL_SECONDS});
+        stored++;
+    }
+    if (stored) await pipeline.exec();
+    res.json({stored});
 });
 
 app.post("/cache/density", async (req, res) => {
-    const key = normalizeCacheKey(req.body?.key);
-    if (!key) return res.json({hit: false});
-    const value = await redis.get(cacheKey(CACHE_PREFIX_DENSITY, key));
-    if (!value) return res.json({hit: false});
-    try {
-        const data = JSON.parse(value);
-        return res.json({hit: true, data});
-    } catch {
-        return res.json({hit: false});
+    const keys = Array.isArray(req.body?.keys) ? req.body.keys : [];
+    const single = normalizeCacheKey(req.body?.key);
+    const list = keys.length ? keys : (single ? [single] : []);
+    if (!list.length) return res.json(keys.length ? {cells: {}} : {hit: false});
+
+    if (!keys.length && list.length === 1) {
+        const value = await redis.get(cacheKey(CACHE_PREFIX_DENSITY, single));
+        if (!value) return res.json({hit: false});
+        try {
+            const data = JSON.parse(value);
+            return res.json({hit: true, data});
+        } catch {
+            return res.json({hit: false});
+        }
     }
+
+    const redisKeys = list.map((k) => cacheKey(CACHE_PREFIX_DENSITY, normalizeCacheKey(k)));
+    const values = await redis.mGet(redisKeys);
+    const cells = {};
+    for (let i = 0; i < list.length; i++) {
+        const raw = values[i];
+        if (!raw) continue;
+        try {
+            const data = JSON.parse(raw);
+            if (data && typeof data === "object") {
+                cells[list[i]] = data;
+            }
+        } catch {
+            // ignore invalid cache entries
+        }
+    }
+    res.json({cells});
 });
 
 app.post("/cache/density/store", async (req, res) => {
-    const key = normalizeCacheKey(req.body?.key);
-    const data = req.body?.data;
-    if (!key || !data || typeof data !== "object") {
+    const payload = req.body?.cells;
+    const singleKey = normalizeCacheKey(req.body?.key);
+    const singleData = req.body?.data;
+    const cells = payload && typeof payload === "object"
+        ? payload
+        : (singleKey && singleData && typeof singleData === "object" ? {[singleKey]: singleData} : null);
+
+    if (!cells || typeof cells !== "object") {
         return res.status(400).json({error: "Invalid density payload"});
     }
-    await redis.set(cacheKey(CACHE_PREFIX_DENSITY, key), JSON.stringify(data), {EX: CACHE_TTL_SECONDS});
-    res.json({stored: true});
+    const entries = Object.entries(cells);
+    if (!entries.length) return res.json({stored: 0});
+
+    const pipeline = redis.multi();
+    let stored = 0;
+    for (const [key, data] of entries) {
+        const k = normalizeCacheKey(key);
+        if (!k || !data || typeof data !== "object") continue;
+        pipeline.set(cacheKey(CACHE_PREFIX_DENSITY, k), JSON.stringify(data), {EX: CACHE_TTL_SECONDS});
+        stored++;
+    }
+    if (stored) await pipeline.exec();
+    res.json({stored});
 });
 
 app.post("/cache/vegetation", async (req, res) => {

@@ -55,6 +55,8 @@ import FiveGMap from "@/components/FiveGMap.vue"
 import {fetchRoadSpeedsInSquare, computeSpeedStats} from "@/utils/roads"
 import {
   fetchBuildingsInSquare,
+  buildDensityCells,
+  densityCellIndex,
   loadBuildingHeightsFromCache,
   saveBuildingHeightsToCache,
   resetBuildingHeightsCache,
@@ -70,6 +72,7 @@ import {computeStreetCanyonStats} from "@/utils/canyons"
 import {fetchVegetationInSquare} from "@/utils/vegetation"
 import {fetchReliefInSquare} from "@/utils/relief"
 import {areaCacheKey} from "@/utils/cacheKeys"
+import {computeSquareBounds} from "@/utils/shared"
 
 const zoneSideKm = ref(1.0)
 const selected = ref(null)
@@ -192,62 +195,57 @@ function scheduleCacheStatsRefresh() {
   }, 800)
 }
 
-function computeDensityGrid(buildings, center, sideKm) {
-  if (!center || !Array.isArray(buildings) || buildings.length === 0) {
-    return {cells: [], stats: null}
+function computeDensityGrid(buildings, bounds, cachedCells) {
+  if (!Array.isArray(buildings) || buildings.length === 0) {
+    return {cells: [], stats: null, toStore: {}}
   }
-  const sideMeters = Number(sideKm) * 1000
-  if (!Number.isFinite(sideMeters) || sideMeters <= 0) {
-    return {cells: [], stats: null}
+  const cells = buildDensityCells(bounds)
+  if (!cells.length) {
+    return {cells: [], stats: null, toStore: {}}
   }
-  const cellSize = 100
-  const cellsPerSide = Math.max(1, Math.ceil(sideMeters / cellSize))
-  const totalCells = cellsPerSide * cellsPerSide
-  const counts = new Array(totalCells).fill(0)
-  const half = sideMeters / 2
-  const lat0 = center.lat
-  const toRad = Math.PI / 180
-  const R = 6378137
-  const cosLat = Math.cos(lat0 * toRad)
+  const cellsByKey = new Map(cells.map(cell => [cell.key, cell]))
 
-  for (const b of buildings) {
-    if (!Number.isFinite(b?.area) || !Array.isArray(b?.geometry) || b.geometry.length === 0) continue
-    const c = centroidLatLng(b.geometry)
-    if (!c) continue
-    const dx = (c.lng - center.lng) * toRad * cosLat * R
-    const dy = (c.lat - center.lat) * toRad * R
-    const ix = Math.floor((dx + half) / cellSize)
-    const iy = Math.floor((dy + half) / cellSize)
-    if (ix < 0 || iy < 0 || ix >= cellsPerSide || iy >= cellsPerSide) continue
-    const idx = iy * cellsPerSide + ix
-    counts[idx] += 1
-  }
-
-  const maxCount = Math.max(1, ...counts)
-  const scores = counts.map(c => Math.max(0, Math.min(1, c / maxCount)))
-  const stats = computeDensityStats(scores)
-  const dLatPerM = (1 / R) * (180 / Math.PI)
-  const dLngPerM = dLatPerM / cosLat
-  const cells = []
-  for (let iy = 0; iy < cellsPerSide; iy++) {
-    for (let ix = 0; ix < cellsPerSide; ix++) {
-      const dx0 = -half + ix * cellSize
-      const dy0 = -half + iy * cellSize
-      const dx1 = dx0 + cellSize
-      const dy1 = dy0 + cellSize
-      const south = center.lat + dy0 * dLatPerM
-      const north = center.lat + dy1 * dLatPerM
-      const west = center.lng + dx0 * dLngPerM
-      const east = center.lng + dx1 * dLngPerM
-      const idx = iy * cellsPerSide + ix
-      cells.push({
-        score: scores[idx],
-        count: counts[idx],
-        bounds: [[south, west], [north, east]]
-      })
+  for (const cell of cells) {
+    const entry = cachedCells?.[cell.key]
+    const count = Number(entry?.count)
+    if (Number.isFinite(count)) {
+      cell.count = count
+      cell.cached = true
     }
   }
-  return {cells, stats}
+
+  for (const b of buildings) {
+    if (!Array.isArray(b?.geometry) || b.geometry.length === 0) continue
+    const c = centroidLatLng(b.geometry)
+    if (!c) continue
+    const idx = densityCellIndex(c.lat, c.lng)
+    if (!idx) continue
+    const cell = cellsByKey.get(idx.key)
+    if (!cell || cell.cached) continue
+    cell.count = (Number(cell.count) || 0) + 1
+  }
+
+  for (const cell of cells) {
+    if (!Number.isFinite(cell.count)) cell.count = 0
+  }
+  const counts = cells.map(c => c.count)
+  const maxCount = Math.max(1, ...counts)
+  const scores = counts.map(c => Math.max(0, Math.min(1, c / maxCount)))
+  for (let i = 0; i < cells.length; i++) {
+    cells[i].score = scores[i]
+  }
+
+  const stats = computeDensityStats(scores)
+  const toStore = {}
+  for (const cell of cells) {
+    if (cell.cached) continue
+    toStore[cell.key] = {count: cell.count}
+  }
+  return {
+    cells: cells.map(c => ({score: c.score, count: c.count, bounds: c.bounds})),
+    stats,
+    toStore
+  }
 }
 
 function centroidLatLng(geometry) {
@@ -559,23 +557,26 @@ watch([buildingsData, selected, zoneSideKm], async () => {
   lastDensityCount = count
 
   try {
-    const cached = await loadDensityFromCache(key, aborter?.signal)
+    const bounds = computeSquareBounds(selected.value.lat, selected.value.lng, zoneSideKm.value)
+    const cellKeys = buildDensityCells(bounds).map(c => c.key)
+    const cached = await loadDensityFromCache(cellKeys, aborter?.signal)
     if (key !== lastDensityKey) return
-    if (cached?.cells && Array.isArray(cached.cells)) {
-      densityGrid.value = cached.cells
-      const scores = cached.cells.map(c => c?.score).filter(n => Number.isFinite(n))
-      densityStats.value = computeDensityStats(scores)
-      return
-    }
+    const grid = computeDensityGrid(buildings, bounds, cached)
+    densityStats.value = grid.stats
+    densityGrid.value = grid.cells
+    saveDensityToCache(grid.toStore, aborter?.signal)
+    scheduleCacheStatsRefresh()
+    return
   } catch (err) {
     if (err?.name === "AbortError") return
   }
 
   if (key !== lastDensityKey) return
-  const grid = computeDensityGrid(buildings, selected.value, zoneSideKm.value)
+  const bounds = computeSquareBounds(selected.value.lat, selected.value.lng, zoneSideKm.value)
+  const grid = computeDensityGrid(buildings, bounds, {})
   densityStats.value = grid.stats
   densityGrid.value = grid.cells
-  saveDensityToCache(key, {cells: grid.cells}, aborter?.signal)
+  saveDensityToCache(grid.toStore, aborter?.signal)
   scheduleCacheStatsRefresh()
 }, {deep: true})
 </script>
