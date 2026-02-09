@@ -426,6 +426,75 @@
         <div class="divider"></div>
 
         <div class="section">
+          <div class="sTitle">Relief (elevation)</div>
+
+          <div v-if="!selected" class="muted">
+            Select a point to compute relief.
+          </div>
+
+          <div v-else>
+            <div v-if="reliefError" class="error">{{ reliefError }}</div>
+            <div v-else-if="!reliefStats" class="muted">
+              <span v-if="reliefLoading">Loading relief...</span>
+              <span v-else>No relief data found in this area.</span>
+            </div>
+            <div v-else class="speedCard">
+              <div class="speedTop">
+                <div class="speedMetric">
+                  <div class="mLabel">Average elevation</div>
+                  <div class="mValue">{{ reliefMean }} m</div>
+                </div>
+                <div class="speedMeta">
+                  <div class="mSmall">{{ reliefSampleCount }} samples</div>
+                  <div class="mSmall">min {{ reliefMin }} / max {{ reliefMax }}</div>
+                </div>
+              </div>
+              <div class="chartWrap">
+                <svg class="chart" viewBox="0 0 260 130" preserveAspectRatio="none">
+                  <g>
+                    <line :x1="padL" :y1="plotBottom" :x2="plotRight" :y2="plotBottom" class="axis" />
+                    <line :x1="padL" :y1="plotTop" :x2="padL" :y2="plotBottom" class="axis" />
+
+                    <g v-for="t in rXTicks" :key="'rx'+t.value">
+                      <line :x1="t.x" :y1="plotBottom" :x2="t.x" :y2="plotBottom + 4" class="tickLine" />
+                      <text :x="t.x" :y="plotBottom + 14" text-anchor="middle" class="tickText">{{ t.value }}</text>
+                    </g>
+
+                    <g v-for="t in rYTicks" :key="'ry'+t.value">
+                      <line :x1="padL - 4" :y1="t.y" :x2="padL" :y2="t.y" class="tickLine" />
+                      <text :x="padL - 6" :y="t.y + 3" text-anchor="end" class="tickText">{{ t.value }}</text>
+                      <line :x1="padL" :y1="t.y" :x2="plotRight" :y2="t.y" class="gridLine" />
+                    </g>
+                  </g>
+
+                  <line
+                      :x1="rXFromElevation(reliefStats.mean)"
+                      :y1="plotTop"
+                      :x2="rXFromElevation(reliefStats.mean)"
+                      :y2="plotBottom"
+                      class="avgLine"
+                  />
+
+                  <g v-for="(b, i) in rHist5" :key="'rb'+i">
+                    <rect
+                        :x="barX5(i)"
+                        :y="plotBottom - rBarH5(b)"
+                        :width="barW5"
+                        :height="rBarH5(b)"
+                        class="bar"
+                        rx="4"
+                    />
+                  </g>
+                </svg>
+              </div>
+              <div class="avgHint">Slope mean: {{ reliefSlope }}%</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="divider"></div>
+
+        <div class="section">
           <div class="sTitle">Cache</div>
           <button
               class="actionBtn"
@@ -445,6 +514,7 @@
               <div>Buildings: {{ cacheStats.buildings.count }} zones - {{ cacheStats.buildings.mb.toFixed(2) }} MB</div>
               <div>Density: {{ cacheStats.density.count }} zones - {{ cacheStats.density.mb.toFixed(2) }} MB</div>
               <div>Vegetation: {{ cacheStats.vegetation.count }} zones - {{ cacheStats.vegetation.mb.toFixed(2) }} MB</div>
+              <div>Relief: {{ cacheStats.relief.count }} zones - {{ cacheStats.relief.mb.toFixed(2) }} MB</div>
               <div>Total: {{ cacheStats.total.mb.toFixed(2) }} MB</div>
               <div v-if="cacheStats.exact === false">Mode: estimate</div>
             </template>
@@ -489,6 +559,9 @@ const props = defineProps({
   vegetationStats: { type: Object, default: null },
   vegetationLoading: { type: Boolean, default: false },
   vegetationError: { type: String, default: null },
+  reliefStats: { type: Object, default: null },
+  reliefLoading: { type: Boolean, default: false },
+  reliefError: { type: String, default: null },
   anyLoading: { type: Boolean, default: false },
   loadingProgress: { type: Number, default: 0 },
   cacheResetting: { type: Boolean, default: false },
@@ -500,7 +573,8 @@ const props = defineProps({
     roads: {count: 0, mb: 0},
     buildings: {count: 0, mb: 0},
     density: {count: 0, mb: 0},
-    vegetation: {count: 0, mb: 0}
+    vegetation: {count: 0, mb: 0},
+    relief: {count: 0, mb: 0}
   }) },
   cacheStatsLoading: { type: Boolean, default: false }
 })
@@ -534,6 +608,26 @@ const vegetationSource = computed(() => {
   if (src === "mixed") return "Mixed"
   return "unknown"
 })
+
+const reliefMean = computed(() => formatRelief(props.reliefStats?.mean, 1))
+const reliefMin = computed(() => formatRelief(props.reliefStats?.min, 0))
+const reliefMax = computed(() => formatRelief(props.reliefStats?.max, 0))
+const reliefSlope = computed(() => {
+  const v = Number(props.reliefStats?.slopeMean)
+  if (!Number.isFinite(v)) return "-"
+  return (v * 100).toFixed(1)
+})
+const reliefSampleCount = computed(() => {
+  const n = Number(props.reliefStats?.sampleCount)
+  return Number.isFinite(n) ? n : 0
+})
+
+function formatRelief(value, digits) {
+  const n = Number(value)
+  if (!Number.isFinite(n)) return "-"
+  const d = Number.isFinite(digits) ? digits : 1
+  return n.toFixed(d)
+}
 
 function xFromSpeed(value) {
   if (!props.speedStats) return plotLeft
@@ -807,6 +901,93 @@ const dXTicks = computed(() => {
 
 const dYTicks = computed(() => {
   const maxY = dMaxHist5.value
+  const n = 4
+  const step = Math.max(1, Math.round(maxY / n))
+  const vals = []
+  for (let v = 0; v <= maxY; v += step) vals.push(v)
+  if (vals[vals.length - 1] !== maxY) vals.push(maxY)
+  return vals.map(v => ({
+    value: v,
+    y: plotBottom - (v / maxY) * (plotBottom - plotTop)
+  }))
+})
+
+const reliefValues = computed(() => {
+  const cells = props.reliefStats?.cells
+  if (!Array.isArray(cells)) return []
+  return cells.map(c => Number(c?.elevation)).filter(n => Number.isFinite(n))
+})
+
+const reliefRange = computed(() => {
+  const vals = reliefValues.value
+  if (!vals.length) return null
+  return { min: Math.min(...vals), max: Math.max(...vals) }
+})
+
+function rXFromElevation(value) {
+  const range = reliefRange.value
+  if (!range) return plotLeft
+  const min = range.min
+  const max = range.max
+  if (!Number.isFinite(min) || !Number.isFinite(max) || max <= min) return plotLeft
+  const t = (value - min) / (max - min)
+  const x = plotLeft + t * (plotRight - plotLeft)
+  return Math.min(plotRight, Math.max(plotLeft, x))
+}
+
+const rHist10 = computed(() => {
+  const vals = reliefValues.value
+  if (!vals.length) return new Array(10).fill(0)
+  const range = reliefRange.value
+  if (!range) return new Array(10).fill(0)
+  const min = range.min
+  const max = range.max
+  const span = max - min
+  const bins = new Array(10).fill(0)
+  if (!Number.isFinite(span) || span <= 0) {
+    bins[0] = vals.length
+    return bins
+  }
+  const step = span / 10
+  for (const v of vals) {
+    let idx = Math.floor((v - min) / step)
+    if (idx < 0) idx = 0
+    if (idx >= 10) idx = 9
+    bins[idx]++
+  }
+  return bins
+})
+
+const rHist5 = computed(() => ([
+  rHist10.value[0] + rHist10.value[1],
+  rHist10.value[2] + rHist10.value[3],
+  rHist10.value[4] + rHist10.value[5],
+  rHist10.value[6] + rHist10.value[7],
+  rHist10.value[8] + rHist10.value[9]
+]))
+
+const rMaxHist5 = computed(() => Math.max(1, ...rHist5.value))
+
+function rBarH5(v) {
+  const h = (v / rMaxHist5.value) * (plotBottom - plotTop)
+  return Math.max(1, Math.min(plotBottom - plotTop, h))
+}
+
+const rXTicks = computed(() => {
+  const range = reliefRange.value
+  if (!range) return []
+  const min = range.min
+  const max = range.max
+  if (max <= min) return [{ value: Math.round(min), x: plotLeft }, { value: Math.round(max), x: plotRight }]
+  const n = 5
+  const step = (max - min) / n
+  const vals = []
+  for (let i = 0; i <= n; i++) vals.push(min + i * step)
+  return vals.map(v => ({ value: Math.round(v), x: rXFromElevation(v) }))
+})
+
+const rYTicks = computed(() => {
+  const maxY = rMaxHist5.value
   const n = 4
   const step = Math.max(1, Math.round(maxY / n))
   const vals = []

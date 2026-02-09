@@ -17,6 +17,9 @@
         :vegetationStats="vegetationStats"
         :vegetationLoading="vegetationLoading"
         :vegetationError="vegetationError"
+        :reliefStats="reliefStats"
+        :reliefLoading="reliefLoading"
+        :reliefError="reliefError"
         :anyLoading="anyLoading"
         :loadingProgress="loadingProgress"
         :cacheResetting="cacheResetting"
@@ -33,12 +36,14 @@
         v-model:showBuildingHeights="showBuildingHeights"
         v-model:showDensityGrid="showDensityGrid"
         v-model:showVegetation="showVegetation"
+        v-model:showRelief="showRelief"
         :zoneSideKm="zoneSideKm"
         :roads="roadsData"
         :canyonRoads="canyonRoads"
         :buildings="buildingsData"
         :densityGrid="densityGrid"
         :vegetationCells="vegetationCells"
+        :reliefCells="reliefCells"
     />
   </div>
 </template>
@@ -63,6 +68,7 @@ import {
 } from "@/utils/buildings"
 import {computeStreetCanyonStats} from "@/utils/canyons"
 import {fetchVegetationInSquare} from "@/utils/vegetation"
+import {fetchReliefInSquare} from "@/utils/relief"
 import {areaCacheKey} from "@/utils/cacheKeys"
 
 const zoneSideKm = ref(1.0)
@@ -73,6 +79,7 @@ const showBuildings = ref(true)
 const showBuildingHeights = ref(true)
 const showDensityGrid = ref(false)
 const showVegetation = ref(false)
+const showRelief = ref(false)
 
 const speedStats = ref(null)
 const roadsData = ref([])
@@ -94,10 +101,15 @@ const vegetationStats = ref(null)
 const vegetationLoading = ref(false)
 const vegetationError = ref(null)
 const vegetationCells = ref([])
+const reliefStats = ref(null)
+const reliefLoading = ref(false)
+const reliefError = ref(null)
+const reliefCells = ref([])
 const speedProgress = ref(0)
 const buildingProgress = ref(0)
 const heightProgress = ref(0)
 const vegetationProgress = ref(0)
+const reliefProgress = ref(0)
 const cacheResetting = ref(false)
 const cacheResetError = ref(null)
 const emptyCacheStats = () => ({
@@ -107,7 +119,8 @@ const emptyCacheStats = () => ({
   roads: {count: 0, mb: 0},
   buildings: {count: 0, mb: 0},
   density: {count: 0, mb: 0},
-  vegetation: {count: 0, mb: 0}
+  vegetation: {count: 0, mb: 0},
+  relief: {count: 0, mb: 0}
 })
 const cacheStats = ref(emptyCacheStats())
 const cacheStatsLoading = ref(false)
@@ -115,11 +128,12 @@ const anyLoading = computed(() => (
   speedLoading.value ||
   buildingLoading.value ||
   buildingHeightLoading.value ||
-  vegetationLoading.value
+  vegetationLoading.value ||
+  reliefLoading.value
 ))
 const loadingProgress = computed(() => {
-  const total = 4
-  const sum = speedProgress.value + buildingProgress.value + heightProgress.value + vegetationProgress.value
+  const total = 5
+  const sum = speedProgress.value + buildingProgress.value + heightProgress.value + vegetationProgress.value + reliefProgress.value
   return Math.max(0, Math.min(1, sum / total))
 })
 
@@ -150,7 +164,8 @@ async function loadCacheStats() {
       roads: norm(stats?.roads),
       buildings: norm(stats?.buildings),
       density: norm(stats?.density),
-      vegetation: norm(stats?.vegetation)
+      vegetation: norm(stats?.vegetation),
+      relief: norm(stats?.relief)
     }
   } catch {
     cacheStats.value = emptyCacheStats()
@@ -268,6 +283,11 @@ function scheduleSpeedRefresh() {
     vegetationLoading.value = false
     vegetationCells.value = []
     vegetationProgress.value = 0
+    reliefStats.value = null
+    reliefError.value = null
+    reliefLoading.value = false
+    reliefCells.value = []
+    reliefProgress.value = 0
     return
   }
 
@@ -288,6 +308,9 @@ function scheduleSpeedRefresh() {
     vegetationLoading.value = true
     vegetationError.value = null
     vegetationProgress.value = 0
+    reliefLoading.value = true
+    reliefError.value = null
+    reliefProgress.value = 0
 
     try {
       const roadsPromise = (async () => {
@@ -332,6 +355,30 @@ function scheduleSpeedRefresh() {
             vegetationCells.value = []
             vegetationLoading.value = false
             vegetationProgress.value = 1
+          }
+        }
+      })()
+
+      const reliefPromise = (async () => {
+        try {
+          const apiKey = import.meta.env.VITE_OPENTOPO_API_KEY
+          const data = await fetchReliefInSquare(
+              selected.value.lat,
+              selected.value.lng,
+              zoneSideKm.value,
+              {signal: aborter.signal, opentopoApiKey: apiKey}
+          )
+          reliefStats.value = data
+          reliefCells.value = Array.isArray(data?.cells) ? data.cells : []
+          reliefLoading.value = false
+          reliefProgress.value = 1
+        } catch (err) {
+          if (err?.name !== "AbortError") {
+            reliefError.value = err?.message || "Failed to fetch relief"
+            reliefStats.value = null
+            reliefCells.value = []
+            reliefLoading.value = false
+            reliefProgress.value = 1
           }
         }
       })()
@@ -460,13 +507,14 @@ function scheduleSpeedRefresh() {
         }
       })
 
-      await Promise.allSettled([roadsPromise, vegetationPromise, buildingsPromise, heightsPromise])
+      await Promise.allSettled([roadsPromise, vegetationPromise, reliefPromise, buildingsPromise, heightsPromise])
       scheduleCacheStatsRefresh()
     } finally {
       speedLoading.value = false
       buildingLoading.value = false
       buildingHeightLoading.value = false
       vegetationLoading.value = false
+      reliefLoading.value = false
     }
   }, 350)
 }
