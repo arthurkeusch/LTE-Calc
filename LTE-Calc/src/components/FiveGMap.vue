@@ -1,7 +1,9 @@
 <template>
   <section class="mapWrap">
     <div class="map" ref="mapEl"></div>
-    <div v-if="roads.length || canyonRoads.length || buildings.length || densityGrid.length || vegetationCells.length || reliefCells.length" class="legend">
+    <div
+        v-if="roads.length || canyonRoads.length || buildings.length || densityGrid.length || vegetationCells.length || reliefCells.length"
+        class="legend">
       <div class="legendTitle">Road speed colors</div>
       <label class="legendToggle">
         <input
@@ -736,15 +738,15 @@ watch(() => props.showRelief, () => {
 .legendBarCanyons {
   position: relative;
   background: linear-gradient(
-    90deg,
-    #2ECC71 0%,
-    #2ECC71 25%,
-    #F1C40F 25%,
-    #F1C40F 50%,
-    #E67E22 50%,
-    #E67E22 75%,
-    #C0392B 75%,
-    #C0392B 100%
+      90deg,
+      #2ECC71 0%,
+      #2ECC71 25%,
+      #F1C40F 25%,
+      #F1C40F 50%,
+      #E67E22 50%,
+      #E67E22 75%,
+      #C0392B 75%,
+      #C0392B 100%
   );
 }
 

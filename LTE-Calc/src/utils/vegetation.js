@@ -1,4 +1,4 @@
-import { fromUrl } from "geotiff"
+import {fromUrl} from "geotiff"
 
 const BACKEND_BASE_URL = "https://lte-calc.arthur-keusch.fr:3000"
 const CACHE_VEGETATION_ENDPOINT = `${BACKEND_BASE_URL}/cache/vegetation`
@@ -28,7 +28,8 @@ export async function fetchVegetationInSquare(lat, lng, sideKm, signal) {
     let cached = {}
     try {
         cached = await loadVegetationCellsFromCache(keys, signal)
-    } catch {}
+    } catch {
+    }
 
     for (const cell of cells) {
         const entry = cached?.[cell.key]
@@ -93,8 +94,8 @@ async function loadVegetationCellsFromCache(keys, signal) {
         try {
             const res = await fetch(CACHE_VEGETATION_ENDPOINT, {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ keys: batch }),
+                headers: {"Content-Type": "application/json"},
+                body: JSON.stringify({keys: batch}),
                 signal
             })
             if (!res.ok) continue
@@ -119,8 +120,8 @@ async function saveVegetationCellsToCache(cells, signal) {
         try {
             await fetch(CACHE_VEGETATION_STORE_ENDPOINT, {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ cells: batch }),
+                headers: {"Content-Type": "application/json"},
+                body: JSON.stringify({cells: batch}),
                 signal
             })
         } catch (err) {
@@ -142,12 +143,13 @@ async function fillIgnVegetationCells(cells, signal) {
     const samplesPerSide = cellSampleCountPerSide(true)
     for (const layer of IGN_WFS_LAYERS) {
         const url = buildIgnWfsUrl(bounds, layer)
-        const res = await fetch(url, { signal })
+        const res = await fetch(url, {signal})
         if (!res.ok) continue
         let json = null
         try {
             json = await res.json()
-        } catch {}
+        } catch {
+        }
         if (!Array.isArray(json?.features)) continue
         const polygons = extractPolygons(json.features)
         if (!polygons.length) {
@@ -233,7 +235,7 @@ async function getWorldCoverTileInfo(tile, tileCache, signal) {
     if (tileCache.has(tile)) return tileCache.get(tile)
 
     const tiff = await fromUrl(worldCoverCogUrl(tile), {
-        fetch: (u, i = {}) => fetch(u, { ...i, signal })
+        fetch: (u, i = {}) => fetch(u, {...i, signal})
     })
 
     const image = await tiff.getImage()
@@ -247,7 +249,7 @@ async function getWorldCoverTileInfo(tile, tileCache, signal) {
     return info
 }
 
-async function sampleWorldCoverClass({ image, bbox, width, height }, lat, lng) {
+async function sampleWorldCoverClass({image, bbox, width, height}, lat, lng) {
     const [minX, minY, maxX, maxY] = bbox
     if (lng < minX || lng > maxX || lat < minY || lat > maxY) return null
 
@@ -264,7 +266,7 @@ async function sampleWorldCoverClass({ image, bbox, width, height }, lat, lng) {
     return Number.isFinite(v) && v > 0 ? v : null
 }
 
-function buildIgnWfsUrl({ south, west, north, east }, layer) {
+function buildIgnWfsUrl({south, west, north, east}, layer) {
     const p = new URLSearchParams({
         SERVICE: "WFS",
         VERSION: "2.0.0",
@@ -283,12 +285,12 @@ function computeSquareBounds(lat, lng, sideKm) {
     const lngNum = Number(lng)
     const sideNum = Number(sideKm)
     if (!Number.isFinite(latNum) || !Number.isFinite(lngNum) || !Number.isFinite(sideNum) || sideNum <= 0) {
-        return { south: latNum, north: latNum, west: lngNum, east: lngNum }
+        return {south: latNum, north: latNum, west: lngNum, east: lngNum}
     }
     const h = (sideNum * 1000) / 2
     const dLat = (h / 6378137) * (180 / Math.PI)
     const dLng = dLat / Math.cos((latNum * Math.PI) / 180)
-    return { south: latNum - dLat, north: latNum + dLat, west: lngNum - dLng, east: lngNum + dLng }
+    return {south: latNum - dLat, north: latNum + dLat, west: lngNum - dLng, east: lngNum + dLng}
 }
 
 function delay(ms, signal) {
@@ -301,7 +303,7 @@ function delay(ms, signal) {
                 clearTimeout(t)
                 rej(new DOMException("Aborted", "AbortError"))
             },
-            { once: true }
+            {once: true}
         )
     })
 }
@@ -310,7 +312,7 @@ async function runWithConcurrencyLimit(items, limit, worker) {
     let i = 0
     const n = Math.max(1, Math.min(limit || 1, items.length))
     await Promise.all(
-        Array.from({ length: n }, async () => {
+        Array.from({length: n}, async () => {
             while (i < items.length) {
                 const idx = i++
                 if (idx >= items.length) break
@@ -346,7 +348,7 @@ function indexPolygons(polygons) {
     for (const ring of polygons || []) {
         const bounds = polygonBounds(ring)
         if (!bounds) continue
-        indexed.push({ ring, bounds })
+        indexed.push({ring, bounds})
     }
     return indexed
 }
@@ -390,11 +392,11 @@ function polygonBounds(ring) {
         if (y < minY) minY = y
         if (y > maxY) maxY = y
     }
-    return { minX, maxX, minY, maxY }
+    return {minX, maxX, minY, maxY}
 }
 
 function buildVegetationCells(bounds) {
-    const { south, west, north, east } = bounds
+    const {south, west, north, east} = bounds
     if (!Number.isFinite(south) || !Number.isFinite(west) || !Number.isFinite(north) || !Number.isFinite(east)) {
         return []
     }
@@ -470,7 +472,7 @@ function cellSamplePoints(cell, samplesPerSide) {
         for (let ix = 0; ix < n; ix++) {
             const tX = (ix + 0.5) / n
             const lng = west + (east - west) * tX
-            points.push({ lat, lng })
+            points.push({lat, lng})
         }
     }
     return points
@@ -546,13 +548,6 @@ function latFromMercatorY(y) {
 function lngFromMercatorX(x) {
     const R = 6378137
     return (Number(x) / R) * (180 / Math.PI)
-}
-
-function isPointInAnyPolygon(x, y, polygons) {
-    for (const poly of polygons) {
-        if (pointInPolygon(x, y, poly)) return true
-    }
-    return false
 }
 
 function pointInPolygon(x, y, ring) {

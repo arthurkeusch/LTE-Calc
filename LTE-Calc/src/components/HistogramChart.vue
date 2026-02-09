@@ -1,18 +1,18 @@
 <template>
   <svg class="chart" viewBox="0 0 260 130" preserveAspectRatio="none">
     <g>
-      <line :x1="plotLeft" :y1="plotBottom" :x2="plotRight" :y2="plotBottom" class="axis" />
-      <line :x1="plotLeft" :y1="plotTop" :x2="plotLeft" :y2="plotBottom" class="axis" />
+      <line :x1="plotLeft" :y1="plotBottom" :x2="plotRight" :y2="plotBottom" class="axis"/>
+      <line :x1="plotLeft" :y1="plotTop" :x2="plotLeft" :y2="plotBottom" class="axis"/>
 
       <g v-for="t in xTicks" :key="'x'+t.value">
-        <line :x1="t.x" :y1="plotBottom" :x2="t.x" :y2="plotBottom + 4" class="tickLine" />
+        <line :x1="t.x" :y1="plotBottom" :x2="t.x" :y2="plotBottom + 4" class="tickLine"/>
         <text :x="t.x" :y="plotBottom + 14" text-anchor="middle" class="tickText">{{ t.value }}</text>
       </g>
 
       <g v-for="t in yTicks" :key="'y'+t.value">
-        <line :x1="plotLeft - 4" :y1="t.y" :x2="plotLeft" :y2="t.y" class="tickLine" />
+        <line :x1="plotLeft - 4" :y1="t.y" :x2="plotLeft" :y2="t.y" class="tickLine"/>
         <text :x="plotLeft - 6" :y="t.y + 3" text-anchor="end" class="tickText">{{ t.value }}</text>
-        <line :x1="plotLeft" :y1="t.y" :x2="plotRight" :y2="t.y" class="gridLine" />
+        <line :x1="plotLeft" :y1="t.y" :x2="plotRight" :y2="t.y" class="gridLine"/>
       </g>
     </g>
 
@@ -39,17 +39,17 @@
 </template>
 
 <script setup>
-import { computed } from "vue"
+import {computed} from "vue"
 
 const props = defineProps({
-  xTicks: { type: Array, default: () => [] },
-  yTicks: { type: Array, default: () => [] },
-  bars: { type: Array, default: () => [] },
-  avgX: { type: Number, default: null },
-  plotLeft: { type: Number, default: 34 },
-  plotRight: { type: Number, default: 250 },
-  plotTop: { type: Number, default: 8 },
-  plotBottom: { type: Number, default: 90 }
+  xTicks: {type: Array, default: () => []},
+  yTicks: {type: Array, default: () => []},
+  bars: {type: Array, default: () => []},
+  avgX: {type: Number, default: null},
+  plotLeft: {type: Number, default: 34},
+  plotRight: {type: Number, default: 250},
+  plotTop: {type: Number, default: 8},
+  plotBottom: {type: Number, default: 90}
 })
 
 const showAvg = computed(() => Number.isFinite(props.avgX))

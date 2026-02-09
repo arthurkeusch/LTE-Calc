@@ -107,7 +107,10 @@
                 </div>
                 <div class="speedMeta">
                   <div class="mSmall">{{ buildingStats.count }} buildings</div>
-                  <div class="mSmall">min {{ buildingStats.min.toFixed(0) }} / max {{ buildingStats.max.toFixed(0) }}</div>
+                  <div class="mSmall">min {{ buildingStats.min.toFixed(0) }} / max {{
+                      buildingStats.max.toFixed(0)
+                    }}
+                  </div>
                 </div>
               </div>
 
@@ -153,7 +156,9 @@
                 </div>
                 <div class="speedMeta">
                   <div class="mSmall">{{ buildingHeightStats.count }} buildings</div>
-                  <div class="mSmall">min {{ buildingHeightStats.min.toFixed(1) }} / max {{ buildingHeightStats.max.toFixed(1) }}</div>
+                  <div class="mSmall">min {{ buildingHeightStats.min.toFixed(1) }} / max
+                    {{ buildingHeightStats.max.toFixed(1) }}
+                  </div>
                 </div>
               </div>
 
@@ -201,22 +206,22 @@
                   <div class="mSmall">min {{ canyonStats.min.toFixed(2) }} / max {{ canyonStats.max.toFixed(2) }}</div>
                 </div>
               </div>
-                <div class="avgHint">Class: {{ canyonClassLabel(canyonStats.avg) }}</div>
-                <div class="chartWrap">
-                  <HistogramChart
-                      :xTicks="cXTicks"
-                      :yTicks="cYTicks"
-                      :bars="canyonBars"
-                      :avgX="canyonAvgX"
-                      :plotLeft="plotLeft"
-                      :plotRight="plotRight"
-                      :plotTop="plotTop"
-                      :plotBottom="plotBottom"
-                  />
-                </div>
+              <div class="avgHint">Class: {{ canyonClassLabel(canyonStats.avg) }}</div>
+              <div class="chartWrap">
+                <HistogramChart
+                    :xTicks="cXTicks"
+                    :yTicks="cYTicks"
+                    :bars="canyonBars"
+                    :avgX="canyonAvgX"
+                    :plotLeft="plotLeft"
+                    :plotRight="plotRight"
+                    :plotTop="plotTop"
+                    :plotBottom="plotBottom"
+                />
               </div>
             </div>
           </div>
+        </div>
 
         <div class="divider"></div>
 
@@ -240,7 +245,9 @@
                 </div>
                 <div class="speedMeta">
                   <div class="mSmall">{{ densityStats.count }} cells</div>
-                  <div class="mSmall">min {{ (densityStats.min * 100).toFixed(1) }} / max {{ (densityStats.max * 100).toFixed(1) }}</div>
+                  <div class="mSmall">min {{ (densityStats.min * 100).toFixed(1) }} / max
+                    {{ (densityStats.max * 100).toFixed(1) }}
+                  </div>
                 </div>
               </div>
 
@@ -357,7 +364,8 @@
               <div>Roads: {{ cacheStats.roads.count }} zones - {{ cacheStats.roads.mb.toFixed(2) }} MB</div>
               <div>Buildings: {{ cacheStats.buildings.count }} zones - {{ cacheStats.buildings.mb.toFixed(2) }} MB</div>
               <div>Density: {{ cacheStats.density.count }} zones - {{ cacheStats.density.mb.toFixed(2) }} MB</div>
-              <div>Vegetation: {{ cacheStats.vegetation.count }} zones - {{ cacheStats.vegetation.mb.toFixed(2) }} MB</div>
+              <div>Vegetation: {{ cacheStats.vegetation.count }} zones - {{ cacheStats.vegetation.mb.toFixed(2) }} MB
+              </div>
               <div>Relief: {{ cacheStats.relief.count }} zones - {{ cacheStats.relief.mb.toFixed(2) }} MB</div>
               <div>Total: {{ cacheStats.total.mb.toFixed(2) }} MB</div>
               <div v-if="cacheStats.exact === false">Mode: estimate</div>
@@ -383,45 +391,47 @@
 </template>
 
 <script setup>
-import { computed } from "vue"
-import { classifyStreetCanyonIndex } from "@/utils/canyons"
+import {computed} from "vue"
+import {classifyStreetCanyonIndex} from "@/utils/canyons"
 import HistogramChart from "@/components/HistogramChart.vue"
 
 const props = defineProps({
-  selected: { type: Object, default: null },
-  zoneSideKm: { type: Number, required: true },
-  speedStats: { type: Object, default: null },
-  speedLoading: { type: Boolean, default: false },
-  speedError: { type: String, default: null },
-  buildingStats: { type: Object, default: null },
-  buildingLoading: { type: Boolean, default: false },
-  buildingError: { type: String, default: null },
-  buildingHeightStats: { type: Object, default: null },
-  buildingHeightLoading: { type: Boolean, default: false },
-  buildingHeightError: { type: String, default: null },
-  canyonStats: { type: Object, default: null },
-  densityStats: { type: Object, default: null },
-  vegetationStats: { type: Object, default: null },
-  vegetationLoading: { type: Boolean, default: false },
-  vegetationError: { type: String, default: null },
-  reliefStats: { type: Object, default: null },
-  reliefLoading: { type: Boolean, default: false },
-  reliefError: { type: String, default: null },
-  anyLoading: { type: Boolean, default: false },
-  loadingProgress: { type: Number, default: 0 },
-  cacheResetting: { type: Boolean, default: false },
-  cacheResetError: { type: String, default: null },
-  cacheStats: { type: Object, default: () => ({
-    exact: true,
-    total: {count: 0, mb: 0},
-    heights: {count: 0, mb: 0},
-    roads: {count: 0, mb: 0},
-    buildings: {count: 0, mb: 0},
-    density: {count: 0, mb: 0},
-    vegetation: {count: 0, mb: 0},
-    relief: {count: 0, mb: 0}
-  }) },
-  cacheStatsLoading: { type: Boolean, default: false }
+  selected: {type: Object, default: null},
+  zoneSideKm: {type: Number, required: true},
+  speedStats: {type: Object, default: null},
+  speedLoading: {type: Boolean, default: false},
+  speedError: {type: String, default: null},
+  buildingStats: {type: Object, default: null},
+  buildingLoading: {type: Boolean, default: false},
+  buildingError: {type: String, default: null},
+  buildingHeightStats: {type: Object, default: null},
+  buildingHeightLoading: {type: Boolean, default: false},
+  buildingHeightError: {type: String, default: null},
+  canyonStats: {type: Object, default: null},
+  densityStats: {type: Object, default: null},
+  vegetationStats: {type: Object, default: null},
+  vegetationLoading: {type: Boolean, default: false},
+  vegetationError: {type: String, default: null},
+  reliefStats: {type: Object, default: null},
+  reliefLoading: {type: Boolean, default: false},
+  reliefError: {type: String, default: null},
+  anyLoading: {type: Boolean, default: false},
+  loadingProgress: {type: Number, default: 0},
+  cacheResetting: {type: Boolean, default: false},
+  cacheResetError: {type: String, default: null},
+  cacheStats: {
+    type: Object, default: () => ({
+      exact: true,
+      total: {count: 0, mb: 0},
+      heights: {count: 0, mb: 0},
+      roads: {count: 0, mb: 0},
+      buildings: {count: 0, mb: 0},
+      density: {count: 0, mb: 0},
+      vegetation: {count: 0, mb: 0},
+      relief: {count: 0, mb: 0}
+    })
+  },
+  cacheStatsLoading: {type: Boolean, default: false}
 })
 
 defineEmits(["update:zoneSideKm", "reset-cache"])
@@ -540,13 +550,13 @@ const xTicks = computed(() => {
   if (!props.speedStats) return []
   const min = Math.round(props.speedStats.min)
   const max = Math.round(props.speedStats.max)
-  if (max <= min) return [{ value: min, x: plotLeft }, { value: max, x: plotRight }]
+  if (max <= min) return [{value: min, x: plotLeft}, {value: max, x: plotRight}]
   const n = 5
   const step = Math.max(1, Math.round((max - min) / n))
   const vals = []
   for (let v = min; v <= max; v += step) vals.push(v)
   if (vals[vals.length - 1] !== max) vals.push(max)
-  return vals.map(v => ({ value: v, x: xFromSpeed(v) }))
+  return vals.map(v => ({value: v, x: xFromSpeed(v)}))
 })
 
 const yTicks = computed(() => {
@@ -651,12 +661,12 @@ const bXTicks = computed(() => {
   if (!props.buildingStats) return []
   const min = Math.max(1, props.buildingStats.min)
   const max = Math.max(min + 1, props.buildingStats.max)
-  if (max <= min) return [{ value: min, x: plotLeft }, { value: max, x: plotRight }]
+  if (max <= min) return [{value: min, x: plotLeft}, {value: max, x: plotRight}]
   const n = 5
   const step = (Math.log10(max) - Math.log10(min)) / n
   const vals = []
   for (let i = 0; i <= n; i++) vals.push(Math.pow(10, Math.log10(min) + i * step))
-  return vals.map(v => ({ value: Math.round(v), x: bXFromArea(v) }))
+  return vals.map(v => ({value: Math.round(v), x: bXFromArea(v)}))
 })
 
 const bYTicks = computed(() => {
@@ -711,12 +721,12 @@ const hXTicks = computed(() => {
   if (!props.buildingHeightStats) return []
   const min = Math.max(1, props.buildingHeightStats.min)
   const max = Math.max(min + 1, props.buildingHeightStats.max)
-  if (max <= min) return [{ value: min, x: plotLeft }, { value: max, x: plotRight }]
+  if (max <= min) return [{value: min, x: plotLeft}, {value: max, x: plotRight}]
   const n = 5
   const step = (Math.log10(max) - Math.log10(min)) / n
   const vals = []
   for (let i = 0; i <= n; i++) vals.push(Math.pow(10, Math.log10(min) + i * step))
-  return vals.map(v => ({ value: Math.round(v), x: hXFromHeight(v) }))
+  return vals.map(v => ({value: Math.round(v), x: hXFromHeight(v)}))
 })
 
 const hYTicks = computed(() => {
@@ -771,12 +781,12 @@ const dXTicks = computed(() => {
   if (!props.densityStats) return []
   const min = props.densityStats.min
   const max = props.densityStats.max
-  if (max <= min) return [{ value: min, x: plotLeft }, { value: max, x: plotRight }]
+  if (max <= min) return [{value: min, x: plotLeft}, {value: max, x: plotRight}]
   const n = 5
   const step = (max - min) / n
   const vals = []
   for (let i = 0; i <= n; i++) vals.push(min + i * step)
-  return vals.map(v => ({ value: Math.round(v * 100), x: dXFromDensity(v) }))
+  return vals.map(v => ({value: Math.round(v * 100), x: dXFromDensity(v)}))
 })
 
 const dYTicks = computed(() => {
@@ -807,7 +817,7 @@ const reliefValues = computed(() => {
 const reliefRange = computed(() => {
   const vals = reliefValues.value
   if (!vals.length) return null
-  return { min: Math.min(...vals), max: Math.max(...vals) }
+  return {min: Math.min(...vals), max: Math.max(...vals)}
 })
 
 function rXFromElevation(value) {
@@ -864,12 +874,12 @@ const rXTicks = computed(() => {
   if (!range) return []
   const min = range.min
   const max = range.max
-  if (max <= min) return [{ value: Math.round(min), x: plotLeft }, { value: Math.round(max), x: plotRight }]
+  if (max <= min) return [{value: Math.round(min), x: plotLeft}, {value: Math.round(max), x: plotRight}]
   const n = 5
   const step = (max - min) / n
   const vals = []
   for (let i = 0; i <= n; i++) vals.push(min + i * step)
-  return vals.map(v => ({ value: Math.round(v), x: rXFromElevation(v) }))
+  return vals.map(v => ({value: Math.round(v), x: rXFromElevation(v)}))
 })
 
 const rYTicks = computed(() => {
@@ -895,11 +905,11 @@ const quintileEdges = computed(() => {
   if (!props.speedStats) return []
   const d = props.speedStats.deciles || []
   return [
-    { from: props.speedStats.min, to: d[1] },
-    { from: d[1], to: d[3] },
-    { from: d[3], to: d[5] },
-    { from: d[5], to: d[7] },
-    { from: d[7], to: props.speedStats.max }
+    {from: props.speedStats.min, to: d[1]},
+    {from: d[1], to: d[3]},
+    {from: d[3], to: d[5]},
+    {from: d[5], to: d[7]},
+    {from: d[7], to: props.speedStats.max}
   ]
 })
 
@@ -915,9 +925,8 @@ function canyonClassLabel(value) {
 
 <style scoped>
 .side {
-  width: 20%;
+  width: 25%;
   min-width: 260px;
-  max-width: 360px;
   border-right: 1px solid rgba(255, 255, 255, 0.08);
   background: radial-gradient(1200px 700px at 40% 20%, rgba(88, 101, 242, 0.18), transparent 60%),
   rgba(0, 0, 0, 0.22);
