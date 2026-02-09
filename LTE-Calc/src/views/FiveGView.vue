@@ -20,6 +20,7 @@
         :reliefStats="reliefStats"
         :reliefLoading="reliefLoading"
         :reliefError="reliefError"
+        :nrConfig="nrConfig"
         :anyLoading="anyLoading"
         :loadingProgress="loadingProgress"
         :cacheResetting="cacheResetting"
@@ -73,6 +74,7 @@ import {fetchVegetationInSquare} from "@/utils/vegetation"
 import {fetchReliefInSquare} from "@/utils/relief"
 import {areaCacheKey} from "@/utils/cacheKeys"
 import {computeSquareBounds} from "@/utils/shared"
+import {computeNrConfig} from "@/utils/nrConfig"
 
 const zoneSideKm = ref(1.0)
 const selected = ref(null)
@@ -127,6 +129,16 @@ const emptyCacheStats = () => ({
 })
 const cacheStats = ref(emptyCacheStats())
 const cacheStatsLoading = ref(false)
+const nrConfig = computed(() => computeNrConfig({
+  speedStats: speedStats.value,
+  buildingStats: buildingStats.value,
+  buildingHeightStats: buildingHeightStats.value,
+  canyonStats: canyonStats.value,
+  densityStats: densityStats.value,
+  vegetationStats: vegetationStats.value,
+  reliefStats: reliefStats.value,
+  zoneSideKm: zoneSideKm.value
+}))
 const anyLoading = computed(() => (
   speedLoading.value ||
   buildingLoading.value ||

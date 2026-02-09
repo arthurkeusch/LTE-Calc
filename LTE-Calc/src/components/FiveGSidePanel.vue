@@ -340,8 +340,6 @@
           </div>
         </div>
 
-        <div class="divider"></div>
-
         <div class="section">
           <div class="sTitle">Cache</div>
           <button
@@ -372,16 +370,30 @@
       </div>
 
       <div class="foot">
-        <div v-if="anyLoading" class="progressCard">
+        <div v-if="!selected" class="tip">
+          Click anywhere on the map to place the center marker and draw the square.
+        </div>
+        <div v-else-if="anyLoading" class="progressCard">
           <div class="progressLabel">Loading data…</div>
           <div class="progressBar">
             <div class="progressFill" :style="{ width: progressPct + '%' }"></div>
           </div>
           <div class="progressPct">{{ progressPct }}%</div>
         </div>
-        <div v-else class="tip">
-          Click anywhere on the map to place the center marker and draw the square.
-        </div>
+          <div v-else class="resultCard">
+            <div class="resultTitle">5G NR configuration</div>
+            <div v-if="nrConfig" class="resultGrid">
+              <div>
+                <div class="mLabel">Frequency</div>
+                <div class="mValue hoverHelp" :title="nrReasonFrequency">{{ nrFrequency }}</div>
+              </div>
+              <div class="resultMeta">
+                <div class="mSmall hoverHelp" :title="nrReasonScs">Subcarrier width {{ nrScs }} kHz</div>
+                <div class="mSmall hoverHelp" :title="nrReasonCp">Cyclic prefix {{ nrCp }}</div>
+              </div>
+            </div>
+            <div v-else class="muted">No configuration available for this area.</div>
+          </div>
       </div>
     </div>
   </aside>
@@ -412,6 +424,7 @@ const props = defineProps({
   reliefStats: {type: Object, default: null},
   reliefLoading: {type: Boolean, default: false},
   reliefError: {type: String, default: null},
+  nrConfig: {type: Object, default: null},
   anyLoading: {type: Boolean, default: false},
   loadingProgress: {type: Number, default: 0},
   cacheResetting: {type: Boolean, default: false},
@@ -495,11 +508,36 @@ const reliefSampleCount = computed(() => {
   return Number.isFinite(n) ? n : 0
 })
 
+const nrFrequency = computed(() => {
+  const label = props.nrConfig?.frequencyLabel
+  if (label) return String(label)
+  const f = Number(props.nrConfig?.frequencyGHz)
+  if (Number.isFinite(f)) {
+    const fixed = Number.isFinite(f % 1) && Math.abs(f % 1) > 1e-6 ? f.toFixed(1) : f.toFixed(0)
+    return `${fixed} GHz`
+  }
+  return "-"
+})
+const nrScs = computed(() => formatNumber(props.nrConfig?.subcarrierSpacingKHz, 0))
+const nrCp = computed(() => {
+  const cp = props.nrConfig?.cyclicPrefix
+  return cp ? String(cp) : "-"
+})
+const nrReasonFrequency = computed(() => props.nrConfig?.reasonFrequency || "")
+const nrReasonScs = computed(() => props.nrConfig?.reasonSubcarrierSpacing || "")
+const nrReasonCp = computed(() => props.nrConfig?.reasonCyclicPrefix || "")
+
 function formatRelief(value, digits) {
   const n = Number(value)
   if (!Number.isFinite(n)) return "-"
   const d = Number.isFinite(digits) ? digits : 1
   return n.toFixed(d)
+}
+
+function formatNumber(value, digits = 0) {
+  const n = Number(value)
+  if (!Number.isFinite(n)) return "-"
+  return n.toFixed(digits)
 }
 
 function xFromSpeed(value) {
@@ -1165,6 +1203,41 @@ function canyonClassLabel(value) {
   gap: 6px;
 }
 
+.resultCard {
+  padding: 12px;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.03);
+  display: grid;
+  gap: 8px;
+}
+
+.resultTitle {
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.3px;
+  opacity: 0.78;
+}
+
+.resultGrid {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.resultMeta {
+  display: grid;
+  gap: 2px;
+  text-align: right;
+}
+
+.hoverHelp {
+  cursor: help;
+  text-decoration: underline dotted rgba(255, 255, 255, 0.45);
+  text-underline-offset: 3px;
+}
+
 .progressLabel {
   font-size: 11px;
   font-weight: 900;
@@ -1245,4 +1318,3 @@ function canyonClassLabel(value) {
   }
 }
 </style>
-
