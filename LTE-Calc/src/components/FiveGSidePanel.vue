@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <aside class="side">
     <div class="sideInner">
       <div class="panel">
@@ -20,22 +20,19 @@
           <div class="sTitle">Area size</div>
 
           <div class="sizeRow">
-            <div class="pill">{{ zoneSideKm.toFixed(1) }} km × {{ zoneSideKm.toFixed(1) }} km</div>
+            <div class="pill">{{ displayZoneSideKm.toFixed(1) }} km × {{ displayZoneSideKm.toFixed(1) }} km</div>
           </div>
 
           <input
               class="range"
               type="range"
-              :value="zoneSideKm"
-              @input="$emit('update:zoneSideKm', Number($event.target.value))"
+              :value="displayZoneSideKm"
+              @input="onSliderInput"
+              @change="onSliderChange"
               min="0.2"
               max="10"
               step="0.1"
           />
-
-          <div class="hint">
-            {{ Math.round(zoneSideKm * 1000) }} m side length
-          </div>
         </div>
 
         <div class="divider"></div>
@@ -391,7 +388,7 @@
 </template>
 
 <script setup>
-import {computed} from "vue"
+import {computed, ref, watch} from "vue"
 import {classifyStreetCanyonIndex} from "@/utils/canyons"
 import HistogramChart from "@/components/HistogramChart.vue"
 
@@ -434,7 +431,28 @@ const props = defineProps({
   cacheStatsLoading: {type: Boolean, default: false}
 })
 
-defineEmits(["update:zoneSideKm", "reset-cache"])
+const emit = defineEmits(["update:zoneSideKm", "reset-cache"])
+
+const sliderValue = ref(Number(props.zoneSideKm))
+watch(
+    () => props.zoneSideKm,
+    (value) => {
+      const n = Number(value)
+      if (Number.isFinite(n)) sliderValue.value = n
+    }
+)
+const displayZoneSideKm = computed(() => {
+  const n = Number(sliderValue.value)
+  return Number.isFinite(n) ? n : Number(props.zoneSideKm)
+})
+
+function onSliderInput(event) {
+  sliderValue.value = Number(event.target.value)
+}
+
+function onSliderChange() {
+  emit("update:zoneSideKm", Number(sliderValue.value))
+}
 
 const padL = 34
 const padR = 10
@@ -1227,3 +1245,4 @@ function canyonClassLabel(value) {
   }
 }
 </style>
+

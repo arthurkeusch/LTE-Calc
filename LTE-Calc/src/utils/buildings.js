@@ -1,5 +1,6 @@
 const OVERPASS_PRIMARY = "https://overpass-api.de/api/interpreter"
 import {areaCacheKey} from "./cacheKeys"
+import {computeSquareBounds, delay, runWithConcurrencyLimit} from "./shared"
 
 const OVERPASS_RETRIES = 3
 const OVERPASS_RETRY_DELAY_MS = 500
@@ -448,19 +449,6 @@ export async function applyAltimetryHeights(buildings, signal, onProgress) {
     return next
 }
 
-function computeSquareBounds(lat, lng, sideKm) {
-    const halfSideM = (Number(sideKm) * 1000) / 2
-    const latRad = (lat * Math.PI) / 180
-    const dLat = (halfSideM / 6378137) * (180 / Math.PI)
-    const dLng = dLat / Math.cos(latRad)
-    return {
-        south: lat - dLat,
-        north: lat + dLat,
-        west: lng - dLng,
-        east: lng + dLng
-    }
-}
-
 async function fetchOverpassJson(query, signal) {
     let lastError = null
     const urls = [OVERPASS_PRIMARY]
@@ -492,19 +480,6 @@ async function fetchOverpassJson(query, signal) {
     }
 
     throw lastError || new Error("Failed to fetch Overpass data")
-}
-
-function delay(ms, signal) {
-    if (signal?.aborted) return Promise.reject(new DOMException("Aborted", "AbortError"))
-    return new Promise((resolve, reject) => {
-        const t = setTimeout(resolve, ms)
-        if (signal) {
-            signal.addEventListener("abort", () => {
-                clearTimeout(t)
-                reject(new DOMException("Aborted", "AbortError"))
-            }, {once: true})
-        }
-    })
 }
 
 async function fetchAltimetryHeights(points, signal, onBatch) {
@@ -578,18 +553,6 @@ async function fetchAltimetryHeights(points, signal, onBatch) {
         throw lastError || new Error("Failed to fetch altimetry data")
     }
     return out
-}
-
-async function runWithConcurrencyLimit(items, limit, worker) {
-    const max = Math.max(1, limit | 0)
-    let cursor = 0
-    const runners = new Array(Math.min(max, items.length)).fill(0).map(async () => {
-        while (cursor < items.length) {
-            const index = cursor++
-            await worker(items[index])
-        }
-    })
-    await Promise.all(runners)
 }
 
 function heightFromAltimetry(e) {

@@ -1,4 +1,5 @@
 import {fromUrl} from "geotiff"
+import {computeSquareBounds, delay, runWithConcurrencyLimit} from "./shared"
 
 const BACKEND_BASE_URL = "https://lte-calc.arthur-keusch.fr:3000"
 const CACHE_VEGETATION_ENDPOINT = `${BACKEND_BASE_URL}/cache/vegetation`
@@ -278,48 +279,6 @@ function buildIgnWfsUrl({south, west, north, east}, layer) {
         COUNT: String(IGN_MAX_FEATURES)
     })
     return `${IGN_WFS_URL}?${p.toString()}`
-}
-
-function computeSquareBounds(lat, lng, sideKm) {
-    const latNum = Number(lat)
-    const lngNum = Number(lng)
-    const sideNum = Number(sideKm)
-    if (!Number.isFinite(latNum) || !Number.isFinite(lngNum) || !Number.isFinite(sideNum) || sideNum <= 0) {
-        return {south: latNum, north: latNum, west: lngNum, east: lngNum}
-    }
-    const h = (sideNum * 1000) / 2
-    const dLat = (h / 6378137) * (180 / Math.PI)
-    const dLng = dLat / Math.cos((latNum * Math.PI) / 180)
-    return {south: latNum - dLat, north: latNum + dLat, west: lngNum - dLng, east: lngNum + dLng}
-}
-
-function delay(ms, signal) {
-    return new Promise((res, rej) => {
-        if (signal?.aborted) return rej(new DOMException("Aborted", "AbortError"))
-        const t = setTimeout(res, ms)
-        signal?.addEventListener(
-            "abort",
-            () => {
-                clearTimeout(t)
-                rej(new DOMException("Aborted", "AbortError"))
-            },
-            {once: true}
-        )
-    })
-}
-
-async function runWithConcurrencyLimit(items, limit, worker) {
-    let i = 0
-    const n = Math.max(1, Math.min(limit || 1, items.length))
-    await Promise.all(
-        Array.from({length: n}, async () => {
-            while (i < items.length) {
-                const idx = i++
-                if (idx >= items.length) break
-                await worker(items[idx])
-            }
-        })
-    )
 }
 
 function extractPolygons(features) {

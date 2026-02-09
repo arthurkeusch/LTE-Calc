@@ -1,3 +1,5 @@
+import {computeSquareBounds, delay, runWithConcurrencyLimit} from "./shared"
+
 const IGN_ALTI_URL = "https://data.geopf.fr/altimetrie/1.0/calcul/alti/rest/elevation.json"
 const IGN_LIDAR_RESOURCE = "ign_lidar_hd_mnx_multi_wld"
 const RELIEF_SAMPLE_STEP_M = 50
@@ -79,13 +81,6 @@ export async function fetchReliefInSquare(lat, lng, sideKm, {signal} = {}) {
 
 function isInFrance(lat, lng) {
     return lat >= 41.0 && lat <= 51.6 && lng >= -5.5 && lng <= 9.8
-}
-
-function computeSquareBounds(lat, lng, sideKm) {
-    const h = (sideKm * 1000) / 2
-    const dLat = (h / 6378137) * (180 / Math.PI)
-    const dLng = dLat / Math.cos((lat * Math.PI) / 180)
-    return {south: lat - dLat, north: lat + dLat, west: lng - dLng, east: lng + dLng}
 }
 
 function buildReliefCells(bounds) {
@@ -315,18 +310,6 @@ function latFromMercatorY(y) {
     return (2 * Math.atan(Math.exp(y / 6378137)) - Math.PI / 2) * (180 / Math.PI)
 }
 
-async function runWithConcurrencyLimit(items, limit, worker) {
-    const max = Math.max(1, limit | 0)
-    let cursor = 0
-    const runners = new Array(Math.min(max, items.length)).fill(0).map(async () => {
-        while (cursor < items.length) {
-            const index = cursor++
-            await worker(items[index])
-        }
-    })
-    await Promise.all(runners)
-}
-
 function elevationFromAltimetry(e) {
     const measures = Array.isArray(e?.measures) ? e.measures : []
     let mnt = null
@@ -343,17 +326,4 @@ function elevationFromAltimetry(e) {
     if (Number.isFinite(z)) return z
     if (Number.isFinite(mns)) return mns
     return null
-}
-
-function delay(ms, signal) {
-    if (signal?.aborted) return Promise.reject(new DOMException("Aborted", "AbortError"))
-    return new Promise((resolve, reject) => {
-        const t = setTimeout(resolve, ms)
-        if (signal) {
-            signal.addEventListener("abort", () => {
-                clearTimeout(t)
-                reject(new DOMException("Aborted", "AbortError"))
-            }, {once: true})
-        }
-    })
 }

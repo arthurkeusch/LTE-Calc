@@ -1,4 +1,5 @@
 import {areaCacheKey} from "./cacheKeys"
+import {computeSquareBounds, delay} from "./shared"
 
 const OVERPASS_PRIMARY = "https://overpass-api.de/api/interpreter"
 const OVERPASS_RETRIES = 3
@@ -88,19 +89,6 @@ async function saveRoadsToCache(cacheKey, data, signal) {
     }
 }
 
-function computeSquareBounds(lat, lng, sideKm) {
-    const halfSideM = (Number(sideKm) * 1000) / 2
-    const latRad = (lat * Math.PI) / 180
-    const dLat = (halfSideM / 6378137) * (180 / Math.PI)
-    const dLng = dLat / Math.cos(latRad)
-    return {
-        south: lat - dLat,
-        north: lat + dLat,
-        west: lng - dLng,
-        east: lng + dLng
-    }
-}
-
 async function fetchOverpassJson(query, signal) {
     let lastError = null
     const urls = [OVERPASS_PRIMARY]
@@ -132,19 +120,6 @@ async function fetchOverpassJson(query, signal) {
     }
 
     throw lastError || new Error("Failed to fetch Overpass data")
-}
-
-function delay(ms, signal) {
-    if (signal?.aborted) return Promise.reject(new DOMException("Aborted", "AbortError"))
-    return new Promise((resolve, reject) => {
-        const t = setTimeout(resolve, ms)
-        if (signal) {
-            signal.addEventListener("abort", () => {
-                clearTimeout(t)
-                reject(new DOMException("Aborted", "AbortError"))
-            }, {once: true})
-        }
-    })
 }
 
 function speedFromTags(tags, highway) {
