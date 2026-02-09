@@ -108,12 +108,7 @@ function pickSubcarrierSpacing(mobilityScore, clutterScore, band) {
         scs = SCS_STEPS_KHZ[SCS_STEPS_KHZ.indexOf(scs) - 1]
         reduced = true
     }
-    let bandAdjusted = false
-    if (band === "FR2" && scs < SCS_STEPS_KHZ[2]) scs = SCS_STEPS_KHZ[2]
-    if (band === "FR1" && scs > SCS_STEPS_KHZ[2]) scs = SCS_STEPS_KHZ[2]
-    if (scs !== base) bandAdjusted = band === "FR2" || band === "FR1"
-
-    const reason = buildScsReason({mobilityScore: m, clutterScore: c, base, reduced, bandAdjusted, result: scs})
+    const reason = buildScsReason({mobilityScore: m, clutterScore: c, base, reduced, result: scs})
     return {value: scs, reason}
 }
 
@@ -166,15 +161,12 @@ function pickFrequency({mobilityScore, clutterScore, trafficScore, vegetationSco
     }
 }
 
-function buildScsReason({mobilityScore, clutterScore, base, reduced, bandAdjusted, result}) {
+function buildScsReason({mobilityScore, clutterScore, base, reduced, result}) {
     const mobilityText = Number.isFinite(mobilityScore) ? `mobility score ${mobilityScore.toFixed(2)}` : "unknown mobility"
     const clutterText = Number.isFinite(clutterScore) ? `clutter score ${clutterScore.toFixed(2)}` : "unknown clutter"
     const baseText = `base SCS ${base} kHz`
     if (reduced) {
         return `${mobilityText}, ${clutterText}: ${baseText} reduced to ${result} kHz for robustness.`
-    }
-    if (bandAdjusted) {
-        return `${mobilityText}, ${clutterText}: ${baseText} adjusted to ${result} kHz for band constraints.`
     }
     return `${mobilityText}, ${clutterText}: ${baseText} fits mobility and latency targets.`
 }
