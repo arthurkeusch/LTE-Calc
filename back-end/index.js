@@ -148,6 +148,7 @@ app.post("/cache/building-heights", async (req, res) => {
     const heights = {};
     for (let i = 0; i < ids.length; i++) {
         const v = values[i];
+        if (v === null || v === undefined) continue;
         const n = Number(v);
         if (Number.isFinite(n)) heights[ids[i]] = n;
     }

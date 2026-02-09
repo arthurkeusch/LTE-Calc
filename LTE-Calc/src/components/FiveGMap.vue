@@ -281,10 +281,10 @@ let centerDot = null
 let square = null
 let roadLayers = L.layerGroup()
 let canyonLayers = L.layerGroup()
-let vegetationLayers = L.layerGroup()
-let reliefLayers = L.layerGroup()
 let buildingLayers = L.layerGroup()
-let densityGridLayers = L.layerGroup()
+let vegetationLayer = null
+let reliefLayer = null
+let densityLayer = null
 
 function boundsFromCenter(lat, lng, halfSideM) {
   const latRad = (lat * Math.PI) / 180
@@ -318,6 +318,157 @@ function canyonLabel(cls) {
   if (cls === "canyon") return "street canyon"
   if (cls === "dense") return "dense canyon"
   return "unknown"
+}
+
+function buildTileIndex(cells, zoom, mapInstance, tileSize, filterCell) {
+  const index = new Map()
+  if (!mapInstance || !Array.isArray(cells) || cells.length === 0) return index
+  const size = tileSize || L.point(256, 256)
+  for (const cell of cells) {
+    if (filterCell && !filterCell(cell)) continue
+    const bounds = cell?.bounds
+    if (!Array.isArray(bounds) || bounds.length < 2) continue
+    const sw = L.latLng(bounds[0][0], bounds[0][1])
+    const ne = L.latLng(bounds[1][0], bounds[1][1])
+    const p1 = mapInstance.project(sw, zoom)
+    const p2 = mapInstance.project(ne, zoom)
+    const minX = Math.min(p1.x, p2.x)
+    const maxX = Math.max(p1.x, p2.x)
+    const minY = Math.min(p1.y, p2.y)
+    const maxY = Math.max(p1.y, p2.y)
+    const minTileX = Math.floor(minX / size.x)
+    const maxTileX = Math.floor(maxX / size.x)
+    const minTileY = Math.floor(minY / size.y)
+    const maxTileY = Math.floor(maxY / size.y)
+    for (let x = minTileX; x <= maxTileX; x++) {
+      for (let y = minTileY; y <= maxTileY; y++) {
+        const key = `${x}:${y}`
+        const list = index.get(key) || []
+        list.push({cell, minX, maxX, minY, maxY})
+        index.set(key, list)
+      }
+    }
+  }
+  return index
+}
+
+function createCellGridLayer({getStyle, filterCell, zIndex}) {
+  const layer = L.gridLayer({
+    tileSize: 256,
+    updateWhenIdle: true,
+    keepBuffer: 1,
+    pane: "overlayPane"
+  })
+  if (Number.isFinite(zIndex)) layer.setZIndex(zIndex)
+  layer._cells = []
+  layer._range = null
+  layer._tileIndex = new Map()
+  layer._indexZoom = null
+  layer._getStyle = getStyle
+  layer._filterCell = filterCell
+
+  layer.setCells = function setCells(cells) {
+    this._cells = Array.isArray(cells) ? cells : []
+    this._tileIndex = new Map()
+    this._indexZoom = null
+    this.redraw()
+  }
+
+  layer.setRange = function setRange(range) {
+    this._range = range
+    this.redraw()
+  }
+
+  layer.createTile = function createTile(coords) {
+    const tile = L.DomUtil.create("canvas", "leaflet-tile")
+    const size = this.getTileSize()
+    tile.width = size.x
+    tile.height = size.y
+    const ctx = tile.getContext("2d")
+    const mapInstance = this._map
+    if (!mapInstance || !this._cells.length) return tile
+    if (this._indexZoom !== coords.z) {
+      this._tileIndex = buildTileIndex(this._cells, coords.z, mapInstance, size, this._filterCell)
+      this._indexZoom = coords.z
+    }
+    const key = `${coords.x}:${coords.y}`
+    const entries = this._tileIndex.get(key)
+    if (!entries || entries.length === 0) return tile
+
+    const origin = L.point(coords.x * size.x, coords.y * size.y)
+    for (const entry of entries) {
+      const style = this._getStyle ? this._getStyle(entry.cell, this._range) : null
+      if (!style) continue
+      const x = entry.minX - origin.x
+      const y = entry.minY - origin.y
+      const w = entry.maxX - entry.minX
+      const h = entry.maxY - entry.minY
+      if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) continue
+      if (style.fill) {
+        ctx.globalAlpha = Number.isFinite(style.fillOpacity) ? style.fillOpacity : 1
+        ctx.fillStyle = style.fill
+        ctx.fillRect(x, y, w, h)
+      }
+      if (style.stroke && Number.isFinite(style.strokeWidth) && style.strokeWidth > 0) {
+        ctx.globalAlpha = Number.isFinite(style.strokeOpacity) ? style.strokeOpacity : 1
+        ctx.strokeStyle = style.stroke
+        ctx.lineWidth = style.strokeWidth
+        ctx.strokeRect(x, y, w, h)
+      }
+    }
+    ctx.globalAlpha = 1
+    return tile
+  }
+
+  return layer
+}
+
+function setLayerVisibility(layer, visible) {
+  if (!map || !layer) return
+  if (visible) {
+    if (!map.hasLayer(layer)) layer.addTo(map)
+  } else if (map.hasLayer(layer)) {
+    map.removeLayer(layer)
+  }
+}
+
+function getVegetationStyle(cell, range) {
+  const score = Number(cell?.score)
+  if (!Number.isFinite(score) || score <= 0) return null
+  const r = range || {min: 0, max: 1}
+  const opacity = vegetationOpacity(score, r.min, r.max)
+  if (opacity <= 0) return null
+  return {
+    fill: "#2ECC71",
+    fillOpacity: opacity,
+    stroke: "rgba(46, 204, 113, 0.35)",
+    strokeOpacity: 0.6,
+    strokeWidth: 1
+  }
+}
+
+function getReliefStyle(cell, range) {
+  const elevation = Number(cell?.elevation)
+  if (!Number.isFinite(elevation) || !range) return null
+  return {
+    fill: reliefToColor(elevation, range.min, range.max),
+    fillOpacity: 0.45,
+    stroke: "rgba(255, 255, 255, 0.08)",
+    strokeOpacity: 0.5,
+    strokeWidth: 0.6
+  }
+}
+
+function getDensityStyle(cell, range) {
+  const score = Number(cell?.score)
+  if (!Number.isFinite(score) || !range) return null
+  return {
+    fill: densityToColor(score, range.min, range.max),
+    fillOpacity: 1,
+    stroke: "rgba(255, 255, 255, 0.12)",
+    strokeOpacity: 0.5,
+    strokeWidth: 0.8
+  }
 }
 
 function updateLayers(fit = true) {
@@ -393,56 +544,6 @@ function updateLayers(fit = true) {
     })
   }
 
-  vegetationLayers.clearLayers()
-  if (props.showVegetation && props.vegetationCells.length) {
-    const range = vegetationRange.value || {min: 0, max: 1}
-    props.vegetationCells.forEach(cell => {
-      const score = Number(cell?.score)
-      if (!Number.isFinite(score) || score <= 0) return
-      const bounds = cell?.bounds
-      if (!Array.isArray(bounds)) return
-      const opacity = vegetationOpacity(score, range.min, range.max)
-      const rect = L.rectangle(bounds, {
-        color: "#2ECC71",
-        weight: 1,
-        opacity: 0.6,
-        fillColor: "#2ECC71",
-        fillOpacity: opacity
-      }).addTo(vegetationLayers)
-      rect.bindTooltip(`Vegetation: ${Math.round(score * 100)}%`, {
-        direction: "top",
-        sticky: true,
-        opacity: 0.9
-      })
-    })
-  }
-
-  reliefLayers.clearLayers()
-  if (props.showRelief && props.reliefCells.length) {
-    const range = reliefRange.value
-    if (range) {
-      props.reliefCells.forEach(cell => {
-        const elevation = Number(cell?.elevation)
-        if (!Number.isFinite(elevation)) return
-        const bounds = cell?.bounds
-        if (!Array.isArray(bounds)) return
-        const color = reliefToColor(elevation, range.min, range.max)
-        const rect = L.rectangle(bounds, {
-          color,
-          weight: 1,
-          opacity: 0.5,
-          fillColor: color,
-          fillOpacity: 0.45
-        }).addTo(reliefLayers)
-        rect.bindTooltip(`Elevation: ${formatHeight(elevation)} m`, {
-          direction: "top",
-          sticky: true,
-          opacity: 0.9
-        })
-      })
-    }
-  }
-
   buildingLayers.clearLayers()
   if (props.showBuildings) {
     const range = heightRange.value
@@ -465,31 +566,6 @@ function updateLayers(fit = true) {
             opacity: 0.9
           }
       )
-    })
-  }
-
-  densityGridLayers.clearLayers()
-  if (props.showDensityGrid && props.densityGrid.length) {
-    const range = densityRange.value
-    const minD = range ? range.min : 0
-    const maxD = range ? range.max : 1
-    props.densityGrid.forEach(cell => {
-      const color = densityToColor(cell.score, minD, maxD)
-      const rect = L.rectangle(cell.bounds, {
-        color,
-        weight: 1,
-        opacity: 0.65,
-        fillColor: color,
-        fillOpacity: 0.4
-      }).addTo(densityGridLayers)
-      const covPct = Number.isFinite(cell.coverage) ? (cell.coverage * 100).toFixed(1) : "0.0"
-      const scorePct = Number.isFinite(cell.score) ? (cell.score * 100).toFixed(1) : "0.0"
-      const count = Number.isFinite(cell.count) ? cell.count : 0
-      rect.bindTooltip(`Score: ${scorePct}%<br/>Coverage: ${covPct}%<br/>Buildings: ${count}`, {
-        direction: "top",
-        sticky: true,
-        opacity: 0.9
-      })
     })
   }
 
@@ -568,12 +644,36 @@ onMounted(() => {
     attribution: "&copy; OpenStreetMap contributors"
   }).addTo(map)
 
-  reliefLayers.addTo(map)
+  reliefLayer = createCellGridLayer({
+    getStyle: getReliefStyle,
+    filterCell: (cell) => Number.isFinite(cell?.elevation),
+    zIndex: 200
+  })
+  vegetationLayer = createCellGridLayer({
+    getStyle: getVegetationStyle,
+    filterCell: (cell) => Number.isFinite(cell?.score) && cell.score > 0,
+    zIndex: 300
+  })
+  densityLayer = createCellGridLayer({
+    getStyle: getDensityStyle,
+    filterCell: (cell) => Number.isFinite(cell?.score),
+    zIndex: 350
+  })
+
+  reliefLayer.setCells(props.reliefCells)
+  reliefLayer.setRange(reliefRange.value)
+  vegetationLayer.setCells(props.vegetationCells)
+  vegetationLayer.setRange(vegetationRange.value)
+  densityLayer.setCells(props.densityGrid)
+  densityLayer.setRange(densityRange.value)
+
+  setLayerVisibility(reliefLayer, props.showRelief)
+  setLayerVisibility(vegetationLayer, props.showVegetation)
+  setLayerVisibility(densityLayer, props.showDensityGrid)
+
   roadLayers.addTo(map)
   canyonLayers.addTo(map)
-  vegetationLayers.addTo(map)
   buildingLayers.addTo(map)
-  densityGridLayers.addTo(map)
 
   map.on("click", onMapClick)
 
@@ -589,6 +689,9 @@ onBeforeUnmount(() => {
   map = null
   centerDot = null
   square = null
+  vegetationLayer = null
+  reliefLayer = null
+  densityLayer = null
 })
 
 watch(() => props.zoneSideKm, () => {
@@ -629,28 +732,40 @@ watch(() => props.showBuildingHeights, () => {
   updateLayers(false)
 })
 
-watch(() => props.densityGrid, () => {
-  updateLayers(false)
+watch(densityGrid, (cells) => {
+  if (densityLayer) densityLayer.setCells(cells)
 }, {deep: true})
 
-watch(() => props.showDensityGrid, () => {
-  updateLayers(false)
+watch(densityRange, (range) => {
+  if (densityLayer) densityLayer.setRange(range)
 })
 
-watch(() => props.vegetationCells, () => {
-  updateLayers(false)
-}, {deep: true})
-
-watch(() => props.showVegetation, () => {
-  updateLayers(false)
+watch(showDensityGrid, (show) => {
+  setLayerVisibility(densityLayer, show)
 })
 
-watch(() => props.reliefCells, () => {
-  updateLayers(false)
+watch(vegetationCells, (cells) => {
+  if (vegetationLayer) vegetationLayer.setCells(cells)
 }, {deep: true})
 
-watch(() => props.showRelief, () => {
-  updateLayers(false)
+watch(vegetationRange, (range) => {
+  if (vegetationLayer) vegetationLayer.setRange(range)
+})
+
+watch(showVegetation, (show) => {
+  setLayerVisibility(vegetationLayer, show)
+})
+
+watch(reliefCells, (cells) => {
+  if (reliefLayer) reliefLayer.setCells(cells)
+}, {deep: true})
+
+watch(reliefRange, (range) => {
+  if (reliefLayer) reliefLayer.setRange(range)
+})
+
+watch(showRelief, (show) => {
+  setLayerVisibility(reliefLayer, show)
 })
 </script>
 

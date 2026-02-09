@@ -4,10 +4,10 @@ import {computeSquareBounds, delay, runWithConcurrencyLimit} from "./shared"
 const BACKEND_BASE_URL = "https://lte-calc.arthur-keusch.fr:3000"
 const CACHE_VEGETATION_ENDPOINT = `${BACKEND_BASE_URL}/cache/vegetation`
 const CACHE_VEGETATION_STORE_ENDPOINT = `${BACKEND_BASE_URL}/cache/vegetation/store`
-const VEGETATION_CELL_SIZE_M = 30
+const VEGETATION_CELL_SIZE_M = 50
 const VEGETATION_CACHE_VERSION = 2
-const VEGETATION_CACHE_BATCH = 500
-const VEGETATION_CACHE_STORE_BATCH = 500
+const VEGETATION_CACHE_BATCH = 5000
+const VEGETATION_CACHE_STORE_BATCH = 5000
 
 const IGN_WFS_URL = "https://data.geopf.fr/wfs/ows"
 const IGN_WFS_LAYERS = ["BDTOPO_V3:zone_de_vegetation"]

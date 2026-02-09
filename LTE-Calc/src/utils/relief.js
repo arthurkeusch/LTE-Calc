@@ -2,7 +2,7 @@ import {computeSquareBounds, delay, runWithConcurrencyLimit} from "./shared"
 
 const IGN_ALTI_URL = "https://data.geopf.fr/altimetrie/1.0/calcul/alti/rest/elevation.json"
 const IGN_LIDAR_RESOURCE = "ign_lidar_hd_mnx_multi_wld"
-const RELIEF_SAMPLE_STEP_M = 50
+const RELIEF_SAMPLE_STEP_M = 100
 const RELIEF_CELL_SIZE_M = RELIEF_SAMPLE_STEP_M
 const RELIEF_CACHE_VERSION = 1
 const RELIEF_CACHE_BATCH = 500

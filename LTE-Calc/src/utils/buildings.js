@@ -347,7 +347,7 @@ export async function applyAltimetryHeights(buildings, signal, onProgress) {
                 if (Number.isFinite(current)) return b
                 const cached = cachedHeights?.[b.id]
                 const cachedNum = Number(cached)
-                if (Number.isFinite(cachedNum) && cachedNum > 0) return {...b, height: cachedNum}
+                if (Number.isFinite(cachedNum)) return {...b, height: cachedNum}
                 return b
             })
             if (typeof onProgress === "function") {
