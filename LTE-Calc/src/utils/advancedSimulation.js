@@ -127,9 +127,14 @@ export function computeAdvancedSimulation({
     let sumSignal = 0
     let count = 0
     for (const cell of grid) {
-        const loss = pathLossDb(best.candidate.center, cell.center, freqMHz) + cell._loss
-        const signal = eirpDbm - loss
-        signalGrid.push({bounds: cell.bounds, signal})
+        const pathLoss = pathLossDb(best.candidate.center, cell.center, freqMHz)
+        const signalFree = eirpDbm - pathLoss
+        const signal = signalFree - cell._loss
+        signalGrid.push({
+            bounds: cell.bounds,
+            signal,
+            signalFree
+        })
         if (signal < minSignal) minSignal = signal
         if (signal > maxSignal) maxSignal = signal
         sumSignal += signal
@@ -246,10 +251,16 @@ function computeBasicSimulation({
     let covered = 0
     let count = 0
     for (const cell of grid) {
-        const loss = pathLossDb(center, cell.center, freqMHz) + globalLoss
+        const pathLoss = pathLossDb(center, cell.center, freqMHz)
+        const loss = pathLoss + globalLoss
         if (!Number.isFinite(loss)) continue
-        const signal = eirpDbm - loss
-        signalGrid.push({bounds: cell.bounds, signal})
+        const signalFree = eirpDbm - pathLoss
+        const signal = signalFree - globalLoss
+        signalGrid.push({
+            bounds: cell.bounds,
+            signal,
+            signalFree
+        })
         if (signal < minSignal) minSignal = signal
         if (signal > maxSignal) maxSignal = signal
         if (signal >= threshold) covered++

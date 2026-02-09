@@ -184,6 +184,10 @@ const props = defineProps({
     type: String,
     default: "basic"
   },
+  nrConfig: {
+    type: Object,
+    default: null
+  },
   roads: {
     type: Array,
     default: () => []
@@ -280,6 +284,7 @@ const {
   reliefCells,
   showSignal,
   simulationMode,
+  nrConfig,
   signalGrid,
   antennaSite
 } = toRefs(props)
@@ -319,6 +324,10 @@ const signalRange = computed(() => {
   const max = Math.min(-60, Math.max(...vals))
   if (max <= min) return {min: -120, max: -60}
   return {min, max}
+})
+const bandwidthMHz = computed(() => {
+  const bw = Number(nrConfig.value?.bandwidthMHz)
+  return Number.isFinite(bw) && bw > 0 ? bw : null
 })
 const signalHoverActive = computed(() => (
     simulationMode.value === "advanced" &&
@@ -550,23 +559,40 @@ function updateSignalTooltip(latlng) {
     clearSignalTooltip()
     return
   }
-  const content = `Signal: ${signal.toFixed(1)} dBm`
+  const lines = [`Signal (with clutter): ${signal.toFixed(1)} dBm`]
+  const bw = bandwidthMHz.value
+  const throughput = estimateMaxThroughputMbps(signal, bw)
+  if (Number.isFinite(throughput)) {
+    lines.push(`Max throughput (with clutter): ${formatThroughput(throughput)} Mbps`)
+  }
+  const signalFree = Number(cell?.signalFree)
+  if (Number.isFinite(signalFree)) {
+    lines.push(`Signal (free-space): ${signalFree.toFixed(1)} dBm`)
+    const throughputFree = estimateMaxThroughputMbps(signalFree, bw)
+    if (Number.isFinite(throughputFree)) {
+      lines.push(`Max throughput (free-space): ${formatThroughput(throughputFree)} Mbps`)
+    }
+  }
+  const content = lines.join("<br/>")
   if (!signalTooltip) {
     signalTooltip = L.tooltip({
       direction: "top",
       opacity: 0.92,
       offset: [0, -8],
       className: "signalTooltip"
-    }).addTo(map)
+    })
   }
   signalTooltip.setLatLng(latlng)
   signalTooltip.setContent(content)
+  if (!map.hasLayer(signalTooltip)) signalTooltip.addTo(map)
 }
 
 function updateSignalHoverState() {
   if (!map) return
   if (signalHoverActive.value) {
-    map.closeTooltip()
+    map.eachLayer((layer) => {
+      if (layer && typeof layer.closeTooltip === "function") layer.closeTooltip()
+    })
     rebuildSignalHoverIndex()
   } else {
     clearSignalTooltip()
@@ -758,6 +784,13 @@ function formatNumber(value, digits) {
   return value.toFixed(d)
 }
 
+function formatThroughput(value) {
+  if (!Number.isFinite(value)) return "-"
+  if (value >= 100) return value.toFixed(0)
+  if (value >= 10) return value.toFixed(1)
+  return value.toFixed(2)
+}
+
 function heightToColor(height, min, max) {
   if (!Number.isFinite(height) || !Number.isFinite(min) || !Number.isFinite(max) || max <= min || height <= 0) {
     return "#F5C542"
@@ -801,6 +834,23 @@ function signalToColor(value, min, max) {
   const t = Math.max(0, Math.min(1, (value - min) / (max - min)))
   const hue = 0 + t * 120
   return `hsl(${hue}, 80%, 52%)`
+}
+
+function estimateMaxThroughputMbps(signalDbm, bwMHz) {
+  const signal = Number(signalDbm)
+  const bw = Number(bwMHz)
+  if (!Number.isFinite(signal) || !Number.isFinite(bw) || bw <= 0) return null
+  const bwHz = bw * 1e6
+  const noiseFigureDb = 7
+  const efficiency = 0.8
+  const noiseDbm = -174 + 10 * Math.log10(bwHz) + noiseFigureDb
+  const snrDb = signal - noiseDbm
+  if (!Number.isFinite(snrDb)) return null
+  const snrLin = Math.pow(10, snrDb / 10)
+  const capacityBps = bwHz * Math.log2(1 + snrLin) * efficiency
+  const capacityMbps = capacityBps / 1e6
+  if (!Number.isFinite(capacityMbps) || capacityMbps < 0) return 0
+  return capacityMbps
 }
 
 function updateAntennaMarker() {

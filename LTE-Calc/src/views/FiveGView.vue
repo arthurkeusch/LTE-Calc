@@ -43,6 +43,7 @@
         v-model:showSignal="showSignal"
         :zoneSideKm="zoneSideKm"
         :simulationMode="simulationMode"
+        :nrConfig="nrConfig"
         :roads="roadsData"
         :canyonRoads="canyonRoads"
         :buildings="buildingsData"
