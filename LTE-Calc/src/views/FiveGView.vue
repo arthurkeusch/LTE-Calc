@@ -25,6 +25,11 @@
         :antennaSite="antennaSite"
         :anyLoading="anyLoading"
         :loadingProgress="loadingProgress"
+        :progressRoads="speedProgress"
+        :progressBuildings="buildingProgress"
+        :progressHeights="heightProgress"
+        :progressVegetation="vegetationProgress"
+        :progressRelief="reliefProgress"
         :cacheResetting="cacheResetting"
         :cacheResetError="cacheResetError"
         :cacheStats="cacheStats"
@@ -638,6 +643,11 @@ watch([
       lat: selected.value.lat,
       lng: selected.value.lng
     }
+    return
+  }
+  if (anyLoading.value) {
+    signalGrid.value = []
+    antennaSite.value = null
     return
   }
   advancedTimer = setTimeout(() => {

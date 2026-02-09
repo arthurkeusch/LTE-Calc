@@ -399,6 +399,12 @@
         </div>
         <div v-else-if="anyLoading" class="progressCard">
           <div class="progressLabel">Loading data…</div>
+          <div v-if="loadingDetails.length" class="progressDetails">
+            <div v-for="item in loadingDetails" :key="item.key" class="progressItem">
+              <span>{{ item.label }}</span>
+              <span>{{ item.percent }}%</span>
+            </div>
+          </div>
           <div class="progressBar">
             <div class="progressFill" :style="{ width: progressPct + '%' }"></div>
           </div>
@@ -433,7 +439,7 @@
 </template>
 
 <script setup>
-import {computed, ref, watch} from "vue"
+import {computed, onBeforeUnmount, ref, watch} from "vue"
 import {classifyStreetCanyonIndex} from "@/utils/canyons"
 import HistogramChart from "@/components/HistogramChart.vue"
 
@@ -462,6 +468,11 @@ const props = defineProps({
   antennaSite: {type: Object, default: null},
   anyLoading: {type: Boolean, default: false},
   loadingProgress: {type: Number, default: 0},
+  progressRoads: {type: Number, default: 0},
+  progressBuildings: {type: Number, default: 0},
+  progressHeights: {type: Number, default: 0},
+  progressVegetation: {type: Number, default: 0},
+  progressRelief: {type: Number, default: 0},
   cacheResetting: {type: Boolean, default: false},
   cacheResetError: {type: String, default: null},
   cacheStats: {
@@ -513,6 +524,48 @@ const plotTop = padT
 const plotBottom = 130 - padB
 
 const progressPct = computed(() => Math.round((props.loadingProgress || 0) * 100))
+const loadingTick = ref(0)
+let loadingTimer = null
+
+watch(
+    () => props.anyLoading,
+    (loading) => {
+      if (loading) {
+        if (!loadingTimer) {
+          loadingTimer = setInterval(() => {
+            loadingTick.value += 1
+          }, 300)
+        }
+      } else if (loadingTimer) {
+        clearInterval(loadingTimer)
+        loadingTimer = null
+      }
+    },
+    {immediate: true}
+)
+
+onBeforeUnmount(() => {
+  if (loadingTimer) {
+    clearInterval(loadingTimer)
+    loadingTimer = null
+  }
+})
+
+const loadingDetails = computed(() => {
+  loadingTick.value
+  const clampPct = (value) => {
+    const n = Number(value)
+    if (!Number.isFinite(n)) return 0
+    return Math.max(0, Math.min(100, Math.round(n * 100)))
+  }
+  const items = []
+  if (props.speedLoading) items.push({key: "roads", label: "Roads", percent: clampPct(props.progressRoads)})
+  if (props.buildingLoading) items.push({key: "buildings", label: "Buildings", percent: clampPct(props.progressBuildings)})
+  if (props.buildingHeightLoading) items.push({key: "heights", label: "Heights", percent: clampPct(props.progressHeights)})
+  if (props.vegetationLoading) items.push({key: "vegetation", label: "Vegetation", percent: clampPct(props.progressVegetation)})
+  if (props.reliefLoading) items.push({key: "relief", label: "Relief", percent: clampPct(props.progressRelief)})
+  return items
+})
 const vegetationPct = computed(() => {
   const c = Number(props.vegetationStats?.coverage)
   if (!Number.isFinite(c)) return 0
@@ -1323,6 +1376,19 @@ function canyonClassLabel(value) {
   font-size: 11px;
   font-weight: 900;
   opacity: 0.75;
+}
+
+.progressDetails {
+  display: grid;
+  gap: 4px;
+  font-size: 11px;
+  opacity: 0.75;
+}
+
+.progressItem {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
 }
 
 .progressBar {
