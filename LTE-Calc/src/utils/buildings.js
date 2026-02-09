@@ -379,7 +379,6 @@ export async function applyAltimetryHeights(buildings, signal, onProgress) {
         const candidates = buildInteriorPoints(b?.geometry, maxPoints, first)
         if (candidates.length <= 1) continue
         for (let c = 1; c < candidates.length; c++) {
-            retryIdx.push(idx)
             retryPoints.push(candidates[c])
             retryMap.push(idx)
         }
@@ -598,20 +597,58 @@ function pickPointInsidePolygon(geometry) {
     const pts = Array.isArray(geometry) ? geometry : []
     if (pts.length < 3) return null
     const centroid = polygonCentroidLatLng(pts)
-    if (centroid && pointInPolygon(centroid, pts)) return centroid
+    if (centroid && pointInPolygon(centroid, pts, false)) return centroid
     const avg = averageLatLng(pts)
-    if (avg && pointInPolygon(avg, pts)) return avg
+    if (avg && pointInPolygon(avg, pts, false)) return avg
+    const strictCandidates = collectInteriorPoints(pts, 16, false)
+    if (strictCandidates.length) return strictCandidates[0]
+    if (centroid && pointInPolygon(centroid, pts, true)) return centroid
+    if (avg && pointInPolygon(avg, pts, true)) return avg
+    const looseCandidates = collectInteriorPoints(pts, 8, true)
+    if (looseCandidates.length) return looseCandidates[0]
     for (const p of pts) {
         const candidate = {lat: p[0], lng: p[1]}
-        if (pointInPolygon(candidate, pts)) return candidate
+        if (pointInPolygon(candidate, pts, true)) return candidate
     }
     for (let i = 0; i < pts.length; i++) {
         const a = pts[i]
         const b = pts[(i + 1) % pts.length]
         const mid = {lat: (a[0] + b[0]) / 2, lng: (a[1] + b[1]) / 2}
-        if (pointInPolygon(mid, pts)) return mid
+        if (pointInPolygon(mid, pts, true)) return mid
     }
     return null
+}
+
+function collectInteriorPoints(pts, maxPoints, allowBoundary = true) {
+    const points = []
+    if (!Array.isArray(pts) || pts.length < 3) return points
+    if (!Number.isFinite(maxPoints) || maxPoints <= 0) return points
+    const bounds = polygonBounds(pts)
+    if (!bounds) return points
+    const {minLat, maxLat, minLng, maxLng} = bounds
+    const spanLat = maxLat - minLat
+    const spanLng = maxLng - minLng
+    if (!Number.isFinite(spanLat) || !Number.isFinite(spanLng) || spanLat === 0 || spanLng === 0) {
+        return points
+    }
+    const n = Math.max(2, Math.ceil(Math.sqrt(maxPoints * 1.5)))
+    for (let iy = 0; iy < n; iy++) {
+        for (let ix = 0; ix < n; ix++) {
+            if (points.length >= maxPoints) return points
+            const lat = minLat + ((iy + 0.5) / n) * spanLat
+            const lng = minLng + ((ix + 0.5) / n) * spanLng
+            const p = {lat, lng}
+            if (pointInPolygon(p, pts, allowBoundary)) points.push(p)
+        }
+    }
+    if (points.length >= maxPoints) return points
+    for (let i = 0; i < pts.length && points.length < maxPoints; i++) {
+        const a = pts[i]
+        const b = pts[(i + 1) % pts.length]
+        const mid = {lat: (a[0] + b[0]) / 2, lng: (a[1] + b[1]) / 2}
+        if (pointInPolygon(mid, pts, allowBoundary)) points.push(mid)
+    }
+    return points
 }
 
 function buildInteriorPoints(geometry, maxPoints, first) {
@@ -620,29 +657,11 @@ function buildInteriorPoints(geometry, maxPoints, first) {
     const points = []
     const firstPoint = first || pickPointInsidePolygon(pts)
     if (firstPoint) points.push(firstPoint)
-    if (maxPoints <= 1) return points
-
-    const bounds = polygonBounds(pts)
-    if (!bounds) return points
-    const {minLat, maxLat, minLng, maxLng} = bounds
-    const spanLat = maxLat - minLat
-    const spanLng = maxLng - minLng
-    const n = Math.max(2, Math.ceil(Math.sqrt(maxPoints * 1.5)))
-    for (let iy = 0; iy < n; iy++) {
-        for (let ix = 0; ix < n; ix++) {
-            if (points.length >= maxPoints) return points
-            const lat = minLat + ((iy + 0.5) / n) * spanLat
-            const lng = minLng + ((ix + 0.5) / n) * spanLng
-            const p = {lat, lng}
-            if (pointInPolygon(p, pts)) points.push(p)
-        }
-    }
-    if (points.length >= maxPoints) return points
-    for (let i = 0; i < pts.length && points.length < maxPoints; i++) {
-        const a = pts[i]
-        const b = pts[(i + 1) % pts.length]
-        const mid = {lat: (a[0] + b[0]) / 2, lng: (a[1] + b[1]) / 2}
-        if (pointInPolygon(mid, pts)) points.push(mid)
+    if (maxPoints <= points.length) return points
+    const extra = collectInteriorPoints(pts, maxPoints - points.length, true)
+    for (const p of extra) {
+        points.push(p)
+        if (points.length >= maxPoints) break
     }
     return points
 }
@@ -693,7 +712,7 @@ function polygonCentroidLatLng(pts) {
     return {lat: cy * inv, lng: cx * inv}
 }
 
-function pointInPolygon(point, pts) {
+function pointInPolygon(point, pts, allowBoundary = true) {
     const x = point.lng
     const y = point.lat
     let inside = false
@@ -702,7 +721,7 @@ function pointInPolygon(point, pts) {
         const yi = pts[i][0]
         const xj = pts[j][1]
         const yj = pts[j][0]
-        if (pointOnSegment(x, y, xi, yi, xj, yj)) return true
+        if (pointOnSegment(x, y, xi, yi, xj, yj)) return allowBoundary
         const intersect = ((yi > y) !== (yj > y)) &&
             (x < ((xj - xi) * (y - yi)) / (yj - yi) + xi)
         if (intersect) inside = !inside
