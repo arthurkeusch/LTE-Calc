@@ -69,42 +69,16 @@
                 <div v-if="speedLoading" class="chartSpinner">
                   <div class="spinner"></div>
                 </div>
-                <svg class="chart" viewBox="0 0 260 130" preserveAspectRatio="none">
-                  <g>
-                    <line :x1="padL" :y1="plotBottom" :x2="plotRight" :y2="plotBottom" class="axis" />
-                    <line :x1="padL" :y1="plotTop" :x2="padL" :y2="plotBottom" class="axis" />
-
-                    <g v-for="t in xTicks" :key="'x'+t.value">
-                      <line :x1="t.x" :y1="plotBottom" :x2="t.x" :y2="plotBottom + 4" class="tickLine" />
-                      <text :x="t.x" :y="plotBottom + 14" text-anchor="middle" class="tickText">{{ t.value }}</text>
-                    </g>
-
-                    <g v-for="t in yTicks" :key="'y'+t.value">
-                      <line :x1="padL - 4" :y1="t.y" :x2="padL" :y2="t.y" class="tickLine" />
-                      <text :x="padL - 6" :y="t.y + 3" text-anchor="end" class="tickText">{{ t.value }}</text>
-                      <line :x1="padL" :y1="t.y" :x2="plotRight" :y2="t.y" class="gridLine" />
-                    </g>
-                  </g>
-
-                  <line
-                      :x1="xFromSpeed(speedStats.avg)"
-                      :y1="plotTop"
-                      :x2="xFromSpeed(speedStats.avg)"
-                      :y2="plotBottom"
-                      class="avgLine"
-                  />
-
-                  <g v-for="(b, i) in hist5" :key="i">
-                    <rect
-                        :x="barX5(i)"
-                        :y="plotBottom - barH5(b)"
-                        :width="barW5"
-                        :height="barH5(b)"
-                        class="bar"
-                        rx="4"
-                    />
-                  </g>
-                </svg>
+                <HistogramChart
+                    :xTicks="xTicks"
+                    :yTicks="yTicks"
+                    :bars="speedBars"
+                    :avgX="speedAvgX"
+                    :plotLeft="plotLeft"
+                    :plotRight="plotRight"
+                    :plotTop="plotTop"
+                    :plotBottom="plotBottom"
+                />
               </div>
             </div>
           </div>
@@ -141,42 +115,16 @@
                 <div v-if="buildingLoading" class="chartSpinner">
                   <div class="spinner"></div>
                 </div>
-                <svg class="chart" viewBox="0 0 260 130" preserveAspectRatio="none">
-                  <g>
-                    <line :x1="padL" :y1="plotBottom" :x2="plotRight" :y2="plotBottom" class="axis" />
-                    <line :x1="padL" :y1="plotTop" :x2="padL" :y2="plotBottom" class="axis" />
-
-                    <g v-for="t in bXTicks" :key="'bx'+t.value">
-                      <line :x1="t.x" :y1="plotBottom" :x2="t.x" :y2="plotBottom + 4" class="tickLine" />
-                      <text :x="t.x" :y="plotBottom + 14" text-anchor="middle" class="tickText">{{ t.value }}</text>
-                    </g>
-
-                    <g v-for="t in bYTicks" :key="'by'+t.value">
-                      <line :x1="padL - 4" :y1="t.y" :x2="padL" :y2="t.y" class="tickLine" />
-                      <text :x="padL - 6" :y="t.y + 3" text-anchor="end" class="tickText">{{ t.value }}</text>
-                      <line :x1="padL" :y1="t.y" :x2="plotRight" :y2="t.y" class="gridLine" />
-                    </g>
-                  </g>
-
-                  <line
-                      :x1="bXFromArea(buildingStats.avg)"
-                      :y1="plotTop"
-                      :x2="bXFromArea(buildingStats.avg)"
-                      :y2="plotBottom"
-                      class="avgLine"
-                  />
-
-                  <g v-for="(b, i) in bHist5" :key="'bb'+i">
-                    <rect
-                        :x="barX5(i)"
-                        :y="plotBottom - bBarH5(b)"
-                        :width="barW5"
-                        :height="bBarH5(b)"
-                        class="bar"
-                        rx="4"
-                    />
-                  </g>
-                </svg>
+                <HistogramChart
+                    :xTicks="bXTicks"
+                    :yTicks="bYTicks"
+                    :bars="buildingBars"
+                    :avgX="buildingAvgX"
+                    :plotLeft="plotLeft"
+                    :plotRight="plotRight"
+                    :plotTop="plotTop"
+                    :plotBottom="plotBottom"
+                />
               </div>
             </div>
           </div>
@@ -213,42 +161,16 @@
                 <div v-if="buildingHeightLoading" class="chartSpinner">
                   <div class="spinner"></div>
                 </div>
-                <svg class="chart" viewBox="0 0 260 130" preserveAspectRatio="none">
-                  <g>
-                    <line :x1="padL" :y1="plotBottom" :x2="plotRight" :y2="plotBottom" class="axis" />
-                    <line :x1="padL" :y1="plotTop" :x2="padL" :y2="plotBottom" class="axis" />
-
-                    <g v-for="t in hXTicks" :key="'hx'+t.value">
-                      <line :x1="t.x" :y1="plotBottom" :x2="t.x" :y2="plotBottom + 4" class="tickLine" />
-                      <text :x="t.x" :y="plotBottom + 14" text-anchor="middle" class="tickText">{{ t.value }}</text>
-                    </g>
-
-                    <g v-for="t in hYTicks" :key="'hy'+t.value">
-                      <line :x1="padL - 4" :y1="t.y" :x2="padL" :y2="t.y" class="tickLine" />
-                      <text :x="padL - 6" :y="t.y + 3" text-anchor="end" class="tickText">{{ t.value }}</text>
-                      <line :x1="padL" :y1="t.y" :x2="plotRight" :y2="t.y" class="gridLine" />
-                    </g>
-                  </g>
-
-                  <line
-                      :x1="hXFromHeight(buildingHeightStats.avg)"
-                      :y1="plotTop"
-                      :x2="hXFromHeight(buildingHeightStats.avg)"
-                      :y2="plotBottom"
-                      class="avgLine"
-                  />
-
-                  <g v-for="(b, i) in hHist5" :key="'hb'+i">
-                    <rect
-                        :x="barX5(i)"
-                        :y="plotBottom - hBarH5(b)"
-                        :width="barW5"
-                        :height="hBarH5(b)"
-                        class="bar"
-                        rx="4"
-                    />
-                  </g>
-                </svg>
+                <HistogramChart
+                    :xTicks="hXTicks"
+                    :yTicks="hYTicks"
+                    :bars="heightBars"
+                    :avgX="heightAvgX"
+                    :plotLeft="plotLeft"
+                    :plotRight="plotRight"
+                    :plotTop="plotTop"
+                    :plotBottom="plotBottom"
+                />
               </div>
             </div>
           </div>
@@ -279,48 +201,22 @@
                   <div class="mSmall">min {{ canyonStats.min.toFixed(2) }} / max {{ canyonStats.max.toFixed(2) }}</div>
                 </div>
               </div>
-              <div class="avgHint">Class: {{ canyonClassLabel(canyonStats.avg) }}</div>
-              <div class="chartWrap">
-                <svg class="chart" viewBox="0 0 260 130" preserveAspectRatio="none">
-                  <g>
-                    <line :x1="padL" :y1="plotBottom" :x2="plotRight" :y2="plotBottom" class="axis" />
-                    <line :x1="padL" :y1="plotTop" :x2="padL" :y2="plotBottom" class="axis" />
-
-                    <g v-for="t in cXTicks" :key="'cx'+t.value">
-                      <line :x1="t.x" :y1="plotBottom" :x2="t.x" :y2="plotBottom + 4" class="tickLine" />
-                      <text :x="t.x" :y="plotBottom + 14" text-anchor="middle" class="tickText">{{ t.value }}</text>
-                    </g>
-
-                    <g v-for="t in cYTicks" :key="'cy'+t.value">
-                      <line :x1="padL - 4" :y1="t.y" :x2="padL" :y2="t.y" class="tickLine" />
-                      <text :x="padL - 6" :y="t.y + 3" text-anchor="end" class="tickText">{{ t.value }}</text>
-                      <line :x1="padL" :y1="t.y" :x2="plotRight" :y2="t.y" class="gridLine" />
-                    </g>
-                  </g>
-
-                  <line
-                      :x1="xFromCanyonBucket(canyonStats.avg)"
-                      :y1="plotTop"
-                      :x2="xFromCanyonBucket(canyonStats.avg)"
-                      :y2="plotBottom"
-                      class="avgLine"
+                <div class="avgHint">Class: {{ canyonClassLabel(canyonStats.avg) }}</div>
+                <div class="chartWrap">
+                  <HistogramChart
+                      :xTicks="cXTicks"
+                      :yTicks="cYTicks"
+                      :bars="canyonBars"
+                      :avgX="canyonAvgX"
+                      :plotLeft="plotLeft"
+                      :plotRight="plotRight"
+                      :plotTop="plotTop"
+                      :plotBottom="plotBottom"
                   />
-
-                  <g v-for="(b, i) in cBuckets" :key="'cb'+i">
-                    <rect
-                        :x="barX4(i)"
-                        :y="plotBottom - cBarH4(b)"
-                        :width="barW4"
-                        :height="cBarH4(b)"
-                        class="bar"
-                        rx="4"
-                    />
-                  </g>
-                </svg>
+                </div>
               </div>
             </div>
           </div>
-        </div>
 
         <div class="divider"></div>
 
@@ -349,42 +245,16 @@
               </div>
 
               <div class="chartWrap">
-                <svg class="chart" viewBox="0 0 260 130" preserveAspectRatio="none">
-                  <g>
-                    <line :x1="padL" :y1="plotBottom" :x2="plotRight" :y2="plotBottom" class="axis" />
-                    <line :x1="padL" :y1="plotTop" :x2="padL" :y2="plotBottom" class="axis" />
-
-                    <g v-for="t in dXTicks" :key="'dx'+t.value">
-                      <line :x1="t.x" :y1="plotBottom" :x2="t.x" :y2="plotBottom + 4" class="tickLine" />
-                      <text :x="t.x" :y="plotBottom + 14" text-anchor="middle" class="tickText">{{ t.value }}</text>
-                    </g>
-
-                    <g v-for="t in dYTicks" :key="'dy'+t.value">
-                      <line :x1="padL - 4" :y1="t.y" :x2="padL" :y2="t.y" class="tickLine" />
-                      <text :x="padL - 6" :y="t.y + 3" text-anchor="end" class="tickText">{{ t.value }}</text>
-                      <line :x1="padL" :y1="t.y" :x2="plotRight" :y2="t.y" class="gridLine" />
-                    </g>
-                  </g>
-
-                  <line
-                      :x1="dXFromDensity(densityStats.avg)"
-                      :y1="plotTop"
-                      :x2="dXFromDensity(densityStats.avg)"
-                      :y2="plotBottom"
-                      class="avgLine"
-                  />
-
-                  <g v-for="(b, i) in dHist5" :key="'db'+i">
-                    <rect
-                        :x="barX5(i)"
-                        :y="plotBottom - dBarH5(b)"
-                        :width="barW5"
-                        :height="dBarH5(b)"
-                        class="bar"
-                        rx="4"
-                    />
-                  </g>
-                </svg>
+                <HistogramChart
+                    :xTicks="dXTicks"
+                    :yTicks="dYTicks"
+                    :bars="densityBars"
+                    :avgX="densityAvgX"
+                    :plotLeft="plotLeft"
+                    :plotRight="plotRight"
+                    :plotTop="plotTop"
+                    :plotBottom="plotBottom"
+                />
               </div>
             </div>
           </div>
@@ -450,42 +320,16 @@
                 </div>
               </div>
               <div class="chartWrap">
-                <svg class="chart" viewBox="0 0 260 130" preserveAspectRatio="none">
-                  <g>
-                    <line :x1="padL" :y1="plotBottom" :x2="plotRight" :y2="plotBottom" class="axis" />
-                    <line :x1="padL" :y1="plotTop" :x2="padL" :y2="plotBottom" class="axis" />
-
-                    <g v-for="t in rXTicks" :key="'rx'+t.value">
-                      <line :x1="t.x" :y1="plotBottom" :x2="t.x" :y2="plotBottom + 4" class="tickLine" />
-                      <text :x="t.x" :y="plotBottom + 14" text-anchor="middle" class="tickText">{{ t.value }}</text>
-                    </g>
-
-                    <g v-for="t in rYTicks" :key="'ry'+t.value">
-                      <line :x1="padL - 4" :y1="t.y" :x2="padL" :y2="t.y" class="tickLine" />
-                      <text :x="padL - 6" :y="t.y + 3" text-anchor="end" class="tickText">{{ t.value }}</text>
-                      <line :x1="padL" :y1="t.y" :x2="plotRight" :y2="t.y" class="gridLine" />
-                    </g>
-                  </g>
-
-                  <line
-                      :x1="rXFromElevation(reliefStats.mean)"
-                      :y1="plotTop"
-                      :x2="rXFromElevation(reliefStats.mean)"
-                      :y2="plotBottom"
-                      class="avgLine"
-                  />
-
-                  <g v-for="(b, i) in rHist5" :key="'rb'+i">
-                    <rect
-                        :x="barX5(i)"
-                        :y="plotBottom - rBarH5(b)"
-                        :width="barW5"
-                        :height="rBarH5(b)"
-                        class="bar"
-                        rx="4"
-                    />
-                  </g>
-                </svg>
+                <HistogramChart
+                    :xTicks="rXTicks"
+                    :yTicks="rYTicks"
+                    :bars="reliefBars"
+                    :avgX="reliefAvgX"
+                    :plotLeft="plotLeft"
+                    :plotRight="plotRight"
+                    :plotTop="plotTop"
+                    :plotBottom="plotBottom"
+                />
               </div>
               <div class="avgHint">Slope mean: {{ reliefSlope }}%</div>
             </div>
@@ -541,6 +385,7 @@
 <script setup>
 import { computed } from "vue"
 import { classifyStreetCanyonIndex } from "@/utils/canyons"
+import HistogramChart from "@/components/HistogramChart.vue"
 
 const props = defineProps({
   selected: { type: Object, default: null },
@@ -678,7 +523,18 @@ function barX4(i) {
   return plotLeft + i * step + (step - barW4) / 2
 }
 
-const avgX = computed(() => xFromSpeed(props.speedStats?.avg ?? 0))
+function buildBars(values, barWidth, barX, barH) {
+  const items = Array.isArray(values) ? values : []
+  return items.map((v, i) => {
+    const height = barH(v)
+    return {
+      x: barX(i),
+      y: plotBottom - height,
+      width: barWidth,
+      height
+    }
+  })
+}
 
 const xTicks = computed(() => {
   if (!props.speedStats) return []
@@ -704,6 +560,12 @@ const yTicks = computed(() => {
     value: v,
     y: plotBottom - (v / maxY) * (plotBottom - plotTop)
   }))
+})
+
+const speedBars = computed(() => buildBars(hist5.value, barW5, barX5, barH5))
+const speedAvgX = computed(() => {
+  const v = Number(props.speedStats?.avg)
+  return Number.isFinite(v) ? xFromSpeed(v) : null
 })
 
 function xFromCanyonBucket(value) {
@@ -748,6 +610,12 @@ const cYTicks = computed(() => {
     value: v,
     y: plotBottom - (v / maxY) * (plotBottom - plotTop)
   }))
+})
+
+const canyonBars = computed(() => buildBars(cBuckets.value, barW4, barX4, cBarH4))
+const canyonAvgX = computed(() => {
+  const v = Number(props.canyonStats?.avg)
+  return Number.isFinite(v) ? xFromCanyonBucket(v) : null
 })
 
 function bXFromArea(value) {
@@ -804,6 +672,12 @@ const bYTicks = computed(() => {
   }))
 })
 
+const buildingBars = computed(() => buildBars(bHist5.value, barW5, barX5, bBarH5))
+const buildingAvgX = computed(() => {
+  const v = Number(props.buildingStats?.avg)
+  return Number.isFinite(v) ? bXFromArea(v) : null
+})
+
 function hXFromHeight(value) {
   if (!props.buildingHeightStats) return plotLeft
   const min = Math.max(1, props.buildingHeightStats.min)
@@ -858,6 +732,12 @@ const hYTicks = computed(() => {
   }))
 })
 
+const heightBars = computed(() => buildBars(hHist5.value, barW5, barX5, hBarH5))
+const heightAvgX = computed(() => {
+  const v = Number(props.buildingHeightStats?.avg)
+  return Number.isFinite(v) ? hXFromHeight(v) : null
+})
+
 function dXFromDensity(value) {
   if (!props.densityStats) return plotLeft
   const min = props.densityStats.min
@@ -910,6 +790,12 @@ const dYTicks = computed(() => {
     value: v,
     y: plotBottom - (v / maxY) * (plotBottom - plotTop)
   }))
+})
+
+const densityBars = computed(() => buildBars(dHist5.value, barW5, barX5, dBarH5))
+const densityAvgX = computed(() => {
+  const v = Number(props.densityStats?.avg)
+  return Number.isFinite(v) ? dXFromDensity(v) : null
 })
 
 const reliefValues = computed(() => {
@@ -997,6 +883,12 @@ const rYTicks = computed(() => {
     value: v,
     y: plotBottom - (v / maxY) * (plotBottom - plotTop)
   }))
+})
+
+const reliefBars = computed(() => buildBars(rHist5.value, barW5, barX5, rBarH5))
+const reliefAvgX = computed(() => {
+  const v = Number(props.reliefStats?.mean)
+  return Number.isFinite(v) ? rXFromElevation(v) : null
 })
 
 const quintileEdges = computed(() => {
@@ -1216,45 +1108,6 @@ function canyonClassLabel(value) {
   border: 2px solid rgba(255, 255, 255, 0.25);
   border-top-color: rgba(255, 255, 255, 0.95);
   animation: spin 0.9s linear infinite;
-}
-
-.chart {
-  width: 100%;
-  height: 130px;
-  display: block;
-}
-
-.bar {
-  fill: rgba(88, 101, 242, 0.85);
-  stroke: rgba(255, 255, 255, 0.12);
-  stroke-width: 1;
-}
-
-.avgLine {
-  stroke: rgba(255, 255, 255, 0.9);
-  stroke-width: 2;
-  opacity: 0.75;
-}
-
-.axis {
-  stroke: rgba(255, 255, 255, 0.22);
-  stroke-width: 1.2;
-}
-
-.tickLine {
-  stroke: rgba(255, 255, 255, 0.22);
-  stroke-width: 1;
-}
-
-.tickText {
-  fill: rgba(255, 255, 255, 0.75);
-  font-size: 9px;
-  font-weight: 800;
-}
-
-.gridLine {
-  stroke: rgba(255, 255, 255, 0.08);
-  stroke-width: 1;
 }
 
 .avgHint {
